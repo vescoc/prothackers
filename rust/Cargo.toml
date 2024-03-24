@@ -1,0 +1,17 @@
+[workspace]
+members = [ "prime-time", "smoke-test"]
+resolver = "2"
+
+[workspace.package]
+authors = ["Claudio Vesco"]
+description = "protohackers tasks"
+edition = "2021"
+
+[workspace.dependencies]
+tokio = { version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util"] }
+clap = { version = "4.5.3", features = ["derive"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
+anyhow = "1.0.80"
+
+
