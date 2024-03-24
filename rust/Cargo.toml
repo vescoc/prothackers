@@ -1,5 +1,5 @@
 [workspace]
-members = [ "prime-time", "smoke-test"]
+members = [ "means-to-an-end", "prime-time", "smoke-test"]
 resolver = "2"
 
 [workspace.package]
