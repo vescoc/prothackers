@@ -1,0 +1,13 @@
+[package]
+name = "unusual-database-program"
+version = "0.1.0"
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
