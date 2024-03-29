@@ -6,7 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tracing::info;
 
 #[tokio::test]
-async fn tests_session() {
+async fn test_session() {
     let (address, port) = spawn_app().await;
 
     let mut stream_bob = TcpStream::connect(&format!("{address}:{port}"))
