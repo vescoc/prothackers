@@ -6,8 +6,12 @@ use tracing::debug;
 
 #[tracing::instrument(skip(socket))]
 pub async fn run(socket: UdpSocket) -> Result<(), anyhow::Error> {
-    debug!("socket addr: {:?} ttl: {:?}", socket.local_addr(), socket.ttl());
-    
+    debug!(
+        "socket addr: {:?} ttl: {:?}",
+        socket.local_addr(),
+        socket.ttl()
+    );
+
     let mut data = HashMap::new();
 
     let mut buffer = [0; 1024];
@@ -21,7 +25,12 @@ pub async fn run(socket: UdpSocket) -> Result<(), anyhow::Error> {
             if key != b"version" {
                 let value = iter.as_slice();
                 data.insert(key.to_vec(), value.to_vec());
-                debug!("[{:?}] insert key: {:?} value: {:?}", addr, std::str::from_utf8(key), std::str::from_utf8(value));
+                debug!(
+                    "[{:?}] insert key: {:?} value: {:?}",
+                    addr,
+                    std::str::from_utf8(key),
+                    std::str::from_utf8(value)
+                );
             }
         } else {
             let key = buffer;
