@@ -20,5 +20,4 @@ clap = { version = "4.5.3", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
 anyhow = "1.0.80"
-
-
+thiserror = "1.0.58"

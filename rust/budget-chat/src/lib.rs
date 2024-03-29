@@ -1,12 +1,18 @@
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{
+    tcp::{ReadHalf, WriteHalf},
+    TcpListener, TcpStream,
+};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 
 use tracing::{debug, error, info, warn};
+
+use thiserror::Error;
 
 type ID = usize;
 type Username = String;
@@ -152,88 +158,105 @@ fn is_username_valid(clients: &HashMap<ID, ClientInfo>, username: &str) -> bool 
         )
 }
 
-/// Client iterations.
-///
-/// Listen for a client and run the chat.
-///
-/// # Errors:
-/// * Error when socket returns an error.
-#[allow(clippy::never_loop)]
-#[tracing::instrument(skip(stream, server, client))]
-async fn handle_client(
+#[derive(Error, Debug)]
+enum ClientError {
+    #[error("internal error")]
+    InternalError(#[from] anyhow::Error),
+
+    #[error("invalid username")]
+    InvalidUsername,
+}
+
+struct WaitingWelcome;
+struct Joining;
+struct Joined;
+struct Chatting;
+
+struct Client<'a, T> {
     id: ID,
-    mut stream: TcpStream,
-    server: UnboundedSender<ClientMessage>,
-    mut client: UnboundedReceiver<ServerMessage>,
-) {
-    info!("start {id}");
+    read: BufReader<ReadHalf<'a>>,
+    write: WriteHalf<'a>,
+    server: &'a mut UnboundedSender<ClientMessage>,
+    #[allow(clippy::struct_field_names)]
+    client: UnboundedReceiver<ServerMessage>,
+    _state: PhantomData<T>,
+}
 
-    let (read, mut write) = stream.split();
-    let mut segments = BufReader::new(read).split(b'\n');
+impl<'a, T> Client<'a, T> {
+    fn into<D>(self) -> Client<'a, D> {
+        Client {
+            id: self.id,
+            read: self.read,
+            write: self.write,
+            server: self.server,
+            client: self.client,
+            _state: PhantomData,
+        }
+    }
+}
 
-    loop {
+impl<'a> Client<'a, WaitingWelcome> {
+    #[tracing::instrument(skip(self))]
+    async fn welcome(mut self) -> Result<Option<Client<'a, Joining>>, ClientError> {
         debug!("state: waiting welcome message");
-        match client.recv().await {
+        match self.client.recv().await {
             Some(ServerMessage::Welcome) => {
                 debug!("got welcome message");
-                write
+                self.write
                     .write_all(b"Welcome to budgetchat! What shall I call you?\n")
                     .await
-                    .expect("cannot write to client");
-                write.flush().await.expect("cannot flush");
+                    .map_err(|e| ClientError::InternalError(e.into()))?;
+                Ok(Some(self.into()))
             }
-            None => {
-                info!("got empty message");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
-            message => {
-                error!("got invalid message from server, close connection: {message:?}");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
+            None => Ok(None),
+            message => unreachable!("invalid server message {:?}", message),
         }
+    }
+}
 
+impl<'a> Client<'a, Joining> {
+    #[tracing::instrument(skip(self))]
+    async fn joining(mut self) -> Result<Option<Client<'a, Joined>>, ClientError> {
         debug!("state: joining");
-        if let Ok(Some(username)) = segments.next_segment().await {
-            debug!("got username");
-            server
-                .send(ClientMessage::SetUsername(
-                    id,
-                    String::from_utf8_lossy(&username).into_owned(),
-                ))
-                .ok();
-        } else {
-            warn!("got invalid message from client, close connection");
-            server.send(ClientMessage::Disconnect(id)).ok();
-            break;
+        let mut buffer = vec![];
+        match self.read.read_until(b'\n', &mut buffer).await {
+            Ok(_) if buffer.last() == Some(&b'\n') => {
+                debug!("got username");
+                self.server
+                    .send(ClientMessage::SetUsername(
+                        self.id,
+                        String::from_utf8_lossy(&buffer[..buffer.len() - 1]).into_owned(),
+                    ))
+                    .map_err(|e| ClientError::InternalError(e.into()))?;
+            }
+            _ => return Ok(None),
         }
 
-        debug!("state: got username");
-        match client.recv().await {
+        match self.client.recv().await {
             Some(ServerMessage::UsernameAccepted) => {
-                server.send(ClientMessage::Joined(id)).ok();
+                self.server
+                    .send(ClientMessage::Joined(self.id))
+                    .map_err(|e| ClientError::InternalError(e.into()))?;
+                Ok(Some(self.into()))
             }
             Some(ServerMessage::UsernameInvalid) => {
-                warn!("invalid username for id {id}");
-                write.write_all(b"Invalid username\n").await.ok();
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
+                self.write
+                    .write_all(b"Invalid username\n")
+                    .await
+                    .map_err(|e| ClientError::InternalError(e.into()))?;
+                Err(ClientError::InvalidUsername)
             }
-            None => {
-                info!("got empty message");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
-            message => {
-                error!("got invalid message from server, close connection: {message:?}");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
+            None => Ok(None),
+            message => unreachable!("invalid server message {:?}", message),
         }
+    }
+}
 
+impl<'a> Client<'a, Joined> {
+    #[tracing::instrument(skip(self))]
+    async fn joined(mut self) -> Result<Option<Client<'a, Chatting>>, ClientError> {
         debug!("state: joined");
-        match client.recv().await {
+        match self.client.recv().await {
             Some(ServerMessage::Users(users)) => {
                 let mut message = String::new();
                 message.push_str("* The room contains:");
@@ -248,75 +271,133 @@ async fn handle_client(
                 }
                 message.push('\n');
 
-                write.write_all(message.as_bytes()).await.ok();
+                self.write
+                    .write_all(message.as_bytes())
+                    .await
+                    .map_err(|e| ClientError::InternalError(e.into()))?;
+                Ok(Some(self.into()))
             }
-            None => {
-                info!("got empty message");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
-            message => {
-                error!("got invalid message from server, close connection: {message:?}");
-                server.send(ClientMessage::Disconnect(id)).ok();
-                break;
-            }
+            None => Ok(None),
+            message => unreachable!("invalid server message {:?}", message),
         }
+    }
+}
 
+impl<'a> Client<'a, Chatting> {
+    #[tracing::instrument(skip(self))]
+    async fn chatting(mut self) -> Result<(), ClientError> {
         debug!("state: main loop");
+        let mut buffer = vec![];
         loop {
             tokio::select! {
-                segment = segments.next_segment() => {
+                segment = self.read.read_until(b'\n', &mut buffer) => {
                     match segment {
-                        Ok(Some(message)) => {
-                            server.send(ClientMessage::Message(id, Arc::new(String::from_utf8_lossy(&message).into_owned()))).ok();
+                        Ok(_) if buffer.last() == Some(&b'\n') => {
+                            self.server.send(ClientMessage::Message(self.id, Arc::new(String::from_utf8_lossy(&buffer[..buffer.len() - 1]).into_owned()))).map_err(|e| ClientError::InternalError(e.into()))?;
+                            buffer.clear();
                         }
-                        Ok(None) => {
-                            info!("got empty message {id}");
-                            server.send(ClientMessage::Disconnect(id)).ok();
-                            break;
-                        }
-                        Err(err) => {
-                            warn!("got {err:?}, disconnect {id}");
-                            server.send(ClientMessage::Disconnect(id)).ok();
-                            break;
-                        }
+                        _ => break,
                     }
                 }
-                message = client.recv() => {
+
+                message = self.client.recv() => {
                     match message {
                         Some(ServerMessage::AnnounceUser(user)) => {
                             let mut message = String::new();
                             writeln!(&mut message, "* {} has entered the room", *user).ok();
-                            write.write_all(message.as_bytes()).await.ok();
+                            self.write.write_all(message.as_bytes()).await.map_err(|e| ClientError::InternalError(e.into()))?;
                         }
                         Some(ServerMessage::Message(user, msg)) => {
                             let mut message = String::new();
                             writeln!(&mut message, "[{}] {}", *user, *msg).ok();
-                            write.write_all(message.as_bytes()).await.ok();
+                            self.write.write_all(message.as_bytes()).await.map_err(|e| ClientError::InternalError(e.into()))?;
                         }
                         Some(ServerMessage::Disconnected(user)) => {
                             let mut message = String::new();
                             writeln!(&mut message, "* {} has left the room", *user).ok();
-                            write.write_all(message.as_bytes()).await.ok();
+                            self.write.write_all(message.as_bytes()).await.map_err(|e| ClientError::InternalError(e.into()))?;
                         }
-                        None => {
-                            info!("got empty message");
-                            server.send(ClientMessage::Disconnect(id)).ok();
-                            break;
-                        }
-                        message => {
-                            error!("got invalid message from server, close connection: {message:?}");
-                            server.send(ClientMessage::Disconnect(id)).ok();
-                            break;
-                        }
+                        None => break,
+                        message => unreachable!("invalid server message {:?}", message),
                     }
                 }
             }
         }
 
+        Ok(())
+    }
+}
+
+/// Client iterations.
+///
+/// Listen for a client and run the chat.
+///
+/// # Errors:
+/// * Error when socket returns an error.
+#[tracing::instrument(skip(stream, server, client))]
+async fn handle_client(
+    id: ID,
+    mut stream: TcpStream,
+    mut server: UnboundedSender<ClientMessage>,
+    client: UnboundedReceiver<ServerMessage>,
+) {
+    info!("start {id}");
+
+    let (read, write) = stream.split();
+    let client = Client {
+        id,
+        read: BufReader::new(read),
+        write,
+        server: &mut server,
+        client,
+        _state: PhantomData::<WaitingWelcome>,
+    };
+
+    let client = match client.welcome().await {
+        Ok(Some(client)) => client,
+        Ok(None) => {
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+        Err(err) => {
+            error!("error {:?}", err);
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+    };
+
+    let client = match client.joining().await {
+        Ok(Some(client)) => client,
+        Ok(None) => {
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+        Err(err) => {
+            error!("error {:?}", err);
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+    };
+
+    let client = match client.joined().await {
+        Ok(Some(client)) => client,
+        Ok(None) => {
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+        Err(err) => {
+            error!("error {:?}", err);
+            server.send(ClientMessage::Disconnect(id)).ok();
+            return;
+        }
+    };
+
+    if let Err(err) = client.chatting().await {
+        error!("error {:?}", err);
+        server.send(ClientMessage::Disconnect(id)).ok();
+    } else {
         debug!("state: done");
         server.send(ClientMessage::Disconnect(id)).ok();
-        break;
     }
 
     info!("done {id}");
