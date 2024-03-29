@@ -1,5 +1,12 @@
 [workspace]
-members = [ "budget-chat", "means-to-an-end", "prime-time", "smoke-test", "unusual-database-program"]
+members = [
+        "budget-chat",
+        "means-to-an-end",
+        "mob-in-the-middle",
+        "prime-time",
+        "smoke-test",
+        "unusual-database-program"
+]
 resolver = "2"
 
 [workspace.package]
