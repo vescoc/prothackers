@@ -5,6 +5,7 @@ members = [
         "mob-in-the-middle",
         "prime-time",
         "smoke-test",
+        "speed-daemon",
         "unusual-database-program"
 ]
 resolver = "2"
@@ -15,6 +16,7 @@ description = "protohackers tasks"
 edition = "2021"
 
 [workspace.dependencies]
+futures = "0.3.30"
 tokio = { version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util"] }
 clap = { version = "4.5.3", features = ["derive"] }
 tracing = "0.1.40"
