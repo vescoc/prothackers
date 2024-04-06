@@ -1,12 +1,12 @@
 [workspace]
 members = [
-        "budget-chat",
-        "means-to-an-end",
-        "mob-in-the-middle",
-        "prime-time",
-        "smoke-test",
-        "speed-daemon",
-        "unusual-database-program"
+    "p00-smoke-test",
+    "p01-prime-time",
+    "p02-means-to-an-end",
+    "p03-budget-chat",
+    "p04-unusual-database-program",
+    "p05-mob-in-the-middle",
+    "p06-speed-daemon",
 ]
 resolver = "2"
 
@@ -23,3 +23,6 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
 anyhow = "1.0.80"
 thiserror = "1.0.58"
+
+[workspace.lints.clippy]
+pedantic = "deny"
