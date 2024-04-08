@@ -193,7 +193,7 @@ mod tests {
             mile: 8,
             limit: 60,
             plate: "UN1X".to_string(),
-            timestamp: 0 + UNIX_DAY,
+            timestamp: UNIX_DAY,
         });
 
         let mut tickets = controller.signal(Plate {
@@ -210,7 +210,7 @@ mod tests {
                 plate: "UN1X".to_string(),
                 road: 321,
                 mile1: 8,
-                timestamp1: 0 + UNIX_DAY,
+                timestamp1: UNIX_DAY,
                 mile2: 9,
                 timestamp2: 45 + UNIX_DAY,
                 speed: 8000,

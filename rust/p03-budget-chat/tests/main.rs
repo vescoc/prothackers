@@ -93,7 +93,7 @@ async fn test_not_joining() {
     match timeout(Duration::from_millis(100), read_alice.next_segment()).await {
         Err(_) => { /* ok */ }
         Ok(Ok(Some(message))) => panic!("invalid: {:?}", std::str::from_utf8(&message)),
-        Ok(payload) => panic!("invalid: {:?}", payload),
+        Ok(payload) => panic!("invalid: {payload:?}"),
     }
 }
 
@@ -103,7 +103,7 @@ async fn spawn_app() -> (String, u16) {
 
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind");
     let port = listener

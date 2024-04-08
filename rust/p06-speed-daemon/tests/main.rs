@@ -123,10 +123,7 @@ async fn test_invalid_message() {
     );
 
     if let Ok(r) = timeout(Duration::from_millis(100), read.read_u8()).await {
-        match r {
-            Ok(_) => panic!("got message"),
-            Err(_) => {} // ok
-        }
+        assert!(r.is_err(), "got message");
     } else {
         panic!("timeout");
     }
@@ -208,7 +205,7 @@ async fn spawn_app() -> (String, u16) {
 
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind app");
     let port = listener

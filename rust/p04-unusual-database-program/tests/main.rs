@@ -9,10 +9,7 @@ async fn test_session() {
     let (address, port) = spawn_app().await;
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-    socket
-        .connect(&format!("{}:{}", address, port))
-        .await
-        .unwrap();
+    socket.connect(&format!("{address}:{port}")).await.unwrap();
 
     let mut buffer = [0; 1024];
 
@@ -65,7 +62,7 @@ async fn spawn_app() -> (String, u16) {
 
     let address = "127.0.0.1";
 
-    let socket = UdpSocket::bind(&format!("{}:0", address)).await.unwrap();
+    let socket = UdpSocket::bind(&format!("{address}:0")).await.unwrap();
     let port = socket
         .local_addr()
         .expect("cannot get local address")

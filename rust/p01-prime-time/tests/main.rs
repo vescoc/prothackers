@@ -25,7 +25,7 @@ async fn test_invalid_number_float() {
     assert!(n > 0);
 
     let response: p01_prime_time::Response = serde_json::from_slice(&buffer[0..n - 1]).unwrap();
-    assert!(response.prime == false);
+    assert!(!response.prime);
 }
 
 #[tokio::test]
@@ -70,7 +70,7 @@ async fn test_ignore_field() {
     assert!(n > 0);
 
     let response: p01_prime_time::Response = serde_json::from_slice(&buffer[0..n - 1]).unwrap();
-    assert!(response.prime == true);
+    assert!(response.prime);
 }
 
 #[tokio::test]
@@ -137,7 +137,7 @@ async fn test_is_prime() {
     assert!(n > 0);
 
     let response: p01_prime_time::Response = serde_json::from_slice(&buffer[0..n - 1]).unwrap();
-    assert!(response.prime == true);
+    assert!(response.prime);
 }
 
 #[tokio::test]
@@ -160,7 +160,7 @@ async fn test_not_is_prime() {
     assert!(n > 0);
 
     let response: p01_prime_time::Response = serde_json::from_slice(&buffer[0..n - 1]).unwrap();
-    assert!(response.prime == false);
+    assert!(!response.prime);
 }
 
 async fn spawn_app() -> (String, u16) {
@@ -169,7 +169,7 @@ async fn spawn_app() -> (String, u16) {
 
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind");
     let port = listener

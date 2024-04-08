@@ -426,7 +426,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(non_snake_case)]
+    #[allow(non_snake_case, clippy::unreadable_literal)]
     async fn test_write_Ticket() {
         let mut buffer = vec![];
 
@@ -453,7 +453,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(non_snake_case)]
+    #[allow(non_snake_case, clippy::unreadable_literal)]
     async fn test_read_Ticket() {
         let buffer = [
             0x21, 0x04, 0x55, 0x4e, 0x31, 0x58, 0x00, 0x42, 0x00, 0x64, 0x00, 0x01, 0xe2, 0x40,

@@ -45,7 +45,7 @@ async fn spawn_app() -> (String, u16) {
 
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind");
     let port = listener.local_addr().expect("cannot get local addr").port();

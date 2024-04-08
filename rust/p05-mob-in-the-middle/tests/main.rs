@@ -45,9 +45,9 @@ async fn test_session() {
         .await
         .unwrap();
 
-    let _0 = read_alice.next_segment().await.unwrap(); // Welcome...
-    let _1 = read_alice.next_segment().await.unwrap(); // * The room contains...
-    let _2 = read_alice.next_segment().await.unwrap(); // * join
+    let _step_0 = read_alice.next_segment().await.unwrap(); // Welcome...
+    let _step_1 = read_alice.next_segment().await.unwrap(); // * The room contains...
+    let _step_2 = read_alice.next_segment().await.unwrap(); // * join
 
     let result = read_alice.next_segment().await.unwrap().unwrap();
     assert_eq!(
@@ -101,7 +101,7 @@ async fn test_not_joining() {
     match timeout(Duration::from_millis(100), read_alice.next_segment()).await {
         Err(_) => {}
         Ok(Ok(Some(message))) => panic!("invalid: {:?}", std::str::from_utf8(&message)),
-        Ok(payload) => panic!("invalid: {:?}", payload),
+        Ok(payload) => panic!("invalid: {payload:?}"),
     }
 }
 
@@ -113,7 +113,7 @@ fn init_logging() {
 async fn spawn_budget_chat_app() -> (String, u16) {
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind budget_chat app");
     let port = listener
@@ -133,7 +133,7 @@ async fn spawn_budget_chat_app() -> (String, u16) {
 async fn spawn_app(chat_address: String, chat_port: u16) -> (String, u16) {
     let address = "127.0.0.1";
 
-    let listener = TcpListener::bind(&format!("{}:0", address))
+    let listener = TcpListener::bind(&format!("{address}:0"))
         .await
         .expect("cannot bind app");
     let port = listener
