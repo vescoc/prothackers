@@ -13,7 +13,7 @@ trait SyncWrite<T>: io::Write {
     fn write_value(&mut self, value: &T) -> Result<usize, io::Error>;
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq, Copy, Clone, Hash, Eq)]
 pub struct Numeric(pub(crate) u32);
 
 impl Numeric {
@@ -204,6 +204,18 @@ pub enum Packet {
     Close {
         session: Session,
     },
+}
+
+impl Packet {
+    #[must_use]
+    pub fn session(&self) -> Numeric {
+        match self {
+            Packet::Connect { session }
+            | Packet::Close { session }
+            | Packet::Data { session, .. }
+            | Packet::Ack { session, .. } => *session,
+        }
+    }
 }
 
 impl<W: io::Write> SyncWrite<Packet> for W {

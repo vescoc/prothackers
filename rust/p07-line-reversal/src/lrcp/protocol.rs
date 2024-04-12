@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::future::{self, Future};
+use std::hash::Hash;
 use std::io;
 use std::marker::PhantomData;
 use std::pin::Pin;
@@ -7,7 +9,7 @@ use std::task::{Context, Poll, Waker};
 use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use tokio::time::{timeout, Instant};
 
 use parking_lot::Mutex;
@@ -16,15 +18,28 @@ use tracing::{debug, warn};
 
 use crate::lrcp::packets::{Numeric, Packet, Payload, Session};
 
-pub trait Read {
-    fn recv(&mut self) -> impl Future<Output = Result<Option<Packet>, io::Error>> + Send;
+pub trait Receiver<P> {
+    fn recv(&mut self) -> impl Future<Output = Result<Option<P>, io::Error>> + Send;
 }
 
-pub trait Write {
-    fn send(&mut self, _: Packet) -> impl Future<Output = Result<(), io::Error>> + Send;
+pub trait Sender<P> {
+    fn send(&mut self, _: P) -> impl Future<Output = Result<(), io::Error>> + Send;
 }
 
-pub trait Endpoint<R: Read, W: Write> {
+impl<P: Send> Receiver<P> for mpsc::UnboundedReceiver<P> {
+    async fn recv(&mut self) -> Result<Option<P>, io::Error> {
+        Ok(mpsc::UnboundedReceiver::recv(self).await)
+    }
+}
+
+impl<P: Send> Sender<P> for mpsc::UnboundedSender<P> {
+    async fn send(&mut self, packet: P) -> Result<(), io::Error> {
+        mpsc::UnboundedSender::send(self, packet)
+            .map_err(|e| io::Error::new(io::ErrorKind::WriteZero, e.to_string()))
+    }
+}
+
+pub trait Endpoint<P, R: Receiver<P>, W: Sender<P>> {
     fn split(self) -> (R, W);
 }
 
@@ -78,7 +93,7 @@ impl<R: Unpin, W: Unpin> AsyncRead for Stream<R, W> {
     }
 }
 
-impl<R: Read + Unpin + Send, W: Write + Unpin + Send> AsyncWrite for Stream<R, W> {
+impl<R: Unpin, W: Unpin> AsyncWrite for Stream<R, W> {
     #[tracing::instrument(skip(self, buffer))]
     fn poll_write(
         self: Pin<&mut Self>,
@@ -182,8 +197,8 @@ pub trait SocketHandler {
         mut sender: W,
     ) -> impl Future<Output = ()> + Send
     where
-        R: Read + Send + 'static,
-        W: Write + Send + 'static,
+        R: Receiver<Packet> + Send + 'static,
+        W: Sender<Packet> + Send + 'static,
     {
         async {
             let mut closing = false;
@@ -321,7 +336,11 @@ pub trait SocketHandler {
 
                                 last_recv_timestamp = Instant::now();
 
-                                warn!("TODO: Connect");
+                                if start_connection {
+                                    warn!("ignoring connection packet");
+                                } else {
+                                    sender.send(Packet::Ack { session, length: Numeric(0) }).await.ok();
+                                }
                             }
 
                             Ok(Ok(None)) => {
@@ -404,6 +423,108 @@ pub trait SocketHandler {
     }
 }
 
+struct Connection {
+    upstream_sender: mpsc::UnboundedSender<Packet>,
+}
+
+impl Connection {
+    fn new<H, ADDR, W>(
+        addr: ADDR,
+        session: Numeric,
+        mut downstream_sender: W,
+        listener_sender: &mpsc::UnboundedSender<
+            Stream<mpsc::UnboundedSender<Packet>, mpsc::UnboundedReceiver<Packet>>,
+        >,
+    ) -> Self
+    where
+        W: Sender<(ADDR, Packet)> + Send + 'static,
+        H: SocketHandler,
+        ADDR: Send + Copy + 'static,
+    {
+        let (upstream_sender, upstream_receiver) = mpsc::unbounded_channel();
+        let (anon_downstream_sender, mut downstream_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            loop {
+                let packet = downstream_receiver.recv().await.unwrap();
+                downstream_sender.send((addr, packet)).await.unwrap();
+            }
+        });
+
+        let upstream = Arc::new(Mutex::new(StreamUpstreamPart {
+            closed: false,
+            buffer: vec![],
+            waker: None,
+            shutdown_waker: None,
+        }));
+        let downstream = Arc::new(Mutex::new(StreamDownstreamPart {
+            closed: false,
+            buffer: vec![],
+            waker: None,
+        }));
+
+        let exit_notify = Arc::new(Notify::new());
+        let upstream_notify = Arc::new(Notify::new());
+        let upstream_shutdown_notify = Arc::new(Notify::new());
+
+        let _handle = {
+            let exit_notify = Arc::clone(&exit_notify);
+            let upstream_notify = Arc::clone(&upstream_notify);
+            let upstream_shutdown_notify = Arc::clone(&upstream_shutdown_notify);
+            let upstream = Arc::clone(&upstream);
+            let downstream = Arc::clone(&downstream);
+            tokio::spawn(async move {
+                H::lrcp_handler(
+                    false,
+                    session,
+                    exit_notify,
+                    upstream_notify,
+                    upstream_shutdown_notify,
+                    upstream,
+                    downstream,
+                    upstream_receiver,
+                    anon_downstream_sender,
+                )
+                .await;
+            })
+        };
+
+        listener_sender
+            .send(Stream {
+                exit_notify,
+                upstream_notify,
+                upstream_shutdown_notify,
+                upstream,
+                downstream,
+                _r: PhantomData,
+                _w: PhantomData,
+            })
+            .expect("cannot send stream");
+
+        Self { upstream_sender }
+    }
+}
+
+#[derive(Debug)]
+pub struct Listener {
+    listener_receiver: mpsc::UnboundedReceiver<
+        Stream<mpsc::UnboundedSender<Packet>, mpsc::UnboundedReceiver<Packet>>,
+    >,
+}
+
+impl Listener {
+    #[tracing::instrument]
+    pub async fn accept(
+        &mut self,
+    ) -> Result<Stream<mpsc::UnboundedSender<Packet>, mpsc::UnboundedReceiver<Packet>>, io::Error>
+    {
+        self.listener_receiver
+            .recv()
+            .await
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "not connected"))
+    }
+}
+
 pub struct Socket<H>(PhantomData<H>);
 
 impl<H> Socket<H> {
@@ -414,11 +535,54 @@ impl<H> Socket<H> {
     }
 }
 
-impl<H: SocketHandler> Socket<H> {
+impl<H: SocketHandler + Send> Socket<H> {
     #[tracing::instrument(skip(endpoint))]
-    pub async fn connect<R: Read + Send + 'static, W: Write + Send + 'static, E: Endpoint<R, W>>(
-        endpoint: E,
-    ) -> Result<Stream<R, W>, io::Error> {
+    pub fn listener<ADDR, R, W, E>(endpoint: E) -> Result<Listener, io::Error>
+    where
+        R: Receiver<(ADDR, Packet)> + Send + 'static,
+        W: Sender<(ADDR, Packet)> + Send + Clone + 'static,
+        E: Endpoint<(ADDR, Packet), R, W>,
+        ADDR: std::fmt::Debug + Eq + Hash + Copy + Send + 'static,
+    {
+        debug!("listener");
+
+        let (mut receiver, downstream_sender) = endpoint.split();
+
+        let (listener_sender, listener_receiver) = mpsc::unbounded_channel();
+
+        tokio::spawn(async move {
+            let mut connections = HashMap::new();
+            loop {
+                let (addr, packet) = receiver.recv().await.unwrap().unwrap();
+                let session = packet.session();
+
+                connections
+                    .entry((addr, session))
+                    .or_insert_with(|| {
+                        debug!("added connection ({addr:?}, {session:?})");
+                        Connection::new::<H, ADDR, W>(
+                            addr,
+                            session,
+                            downstream_sender.clone(),
+                            &listener_sender,
+                        )
+                    })
+                    .upstream_sender
+                    .send(packet)
+                    .unwrap();
+            }
+        });
+
+        Ok(Listener { listener_receiver })
+    }
+
+    #[tracing::instrument(skip(endpoint))]
+    pub async fn connect<R, W, E>(endpoint: E) -> Result<Stream<R, W>, io::Error>
+    where
+        R: Receiver<Packet> + Send + 'static,
+        W: Sender<Packet> + Send + 'static,
+        E: Endpoint<Packet, R, W>,
+    {
         let session = Self::next_session();
 
         let (receiver, sender) = endpoint.split();
@@ -492,7 +656,8 @@ mod tests {
     const SESSION_EXPIRE_TIMEOUT: Duration = Duration::from_millis(600);
     const DELAY: Duration = Duration::from_millis(50);
 
-    const _: () = assert!(SESSION_EXPIRE_TIMEOUT.as_millis() > RETRASMISSION_TIMEOUT.as_millis() * 2);
+    const _: () =
+        assert!(SESSION_EXPIRE_TIMEOUT.as_millis() > RETRASMISSION_TIMEOUT.as_millis() * 2);
     const _: () = assert!(RETRASMISSION_TIMEOUT.as_millis() >= DELAY.as_millis() * 2);
     const _: () = assert!(DELAY.as_millis() >= 5);
 
@@ -505,7 +670,7 @@ mod tests {
 
     struct EchoEndpoint;
 
-    impl Endpoint<EchoEndpointRead, EchoEndpointWrite> for EchoEndpoint {
+    impl Endpoint<Packet, EchoEndpointRead, EchoEndpointWrite> for EchoEndpoint {
         fn split(self) -> (EchoEndpointRead, EchoEndpointWrite) {
             let (sender, receiver) = mpsc::unbounded_channel();
 
@@ -515,7 +680,7 @@ mod tests {
 
     struct EchoEndpointRead(mpsc::UnboundedReceiver<Packet>);
 
-    impl Read for EchoEndpointRead {
+    impl Receiver<Packet> for EchoEndpointRead {
         async fn recv(&mut self) -> Result<Option<Packet>, io::Error> {
             Ok(self.0.recv().await)
         }
@@ -523,7 +688,7 @@ mod tests {
 
     struct EchoEndpointWrite(mpsc::UnboundedSender<Packet>);
 
-    impl Write for EchoEndpointWrite {
+    impl Sender<Packet> for EchoEndpointWrite {
         async fn send(&mut self, packet: Packet) -> Result<(), io::Error> {
             let r = match packet {
                 Packet::Connect { session } => self.0.send(Packet::Ack {
@@ -541,35 +706,16 @@ mod tests {
         }
     }
 
-    struct TestEndpoint {
-        sender: mpsc::UnboundedSender<Packet>,
-        receiver: mpsc::UnboundedReceiver<Packet>,
+    struct TestEndpoint<P> {
+        sender: mpsc::UnboundedSender<P>,
+        receiver: mpsc::UnboundedReceiver<P>,
     }
 
-    impl Endpoint<TestEndpointRead, TestEndpointWrite> for TestEndpoint {
-        fn split(self) -> (TestEndpointRead, TestEndpointWrite) {
-            (
-                TestEndpointRead(self.receiver),
-                TestEndpointWrite(self.sender),
-            )
-        }
-    }
-
-    struct TestEndpointRead(mpsc::UnboundedReceiver<Packet>);
-
-    impl Read for TestEndpointRead {
-        async fn recv(&mut self) -> Result<Option<Packet>, io::Error> {
-            Ok(self.0.recv().await)
-        }
-    }
-
-    struct TestEndpointWrite(mpsc::UnboundedSender<Packet>);
-
-    impl Write for TestEndpointWrite {
-        async fn send(&mut self, packet: Packet) -> Result<(), io::Error> {
-            self.0
-                .send(packet)
-                .map_err(|e| io::Error::new(io::ErrorKind::WriteZero, e))
+    impl<P: Send> Endpoint<P, mpsc::UnboundedReceiver<P>, mpsc::UnboundedSender<P>>
+        for TestEndpoint<P>
+    {
+        fn split(self) -> (mpsc::UnboundedReceiver<P>, mpsc::UnboundedSender<P>) {
+            (self.receiver, self.sender)
         }
     }
 
@@ -735,5 +881,46 @@ mod tests {
             Packet::Data { .. } => {}
             packet => panic!("invalid packet: {packet:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_accept() {
+        init_tracing_subscriber();
+
+        let (upstream_sender, mut upstream_receiver) = mpsc::unbounded_channel();
+        let (downstream_sender, downstream_receiver) = mpsc::unbounded_channel();
+
+        let endpoint = TestEndpoint::<((), Packet)> {
+            sender: upstream_sender,
+            receiver: downstream_receiver,
+        };
+
+        let mut listener = Socket::<TestSocketHandler>::listener(endpoint).unwrap();
+
+        let session = Numeric(666);
+
+        downstream_sender
+            .send(((), Packet::Connect { session }))
+            .unwrap();
+
+        let _stream = timeout(Duration::from_millis(100), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+
+        let packet = timeout(Duration::from_millis(100), upstream_receiver.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                (),
+                Packet::Ack {
+                    session,
+                    length: Numeric(0)
+                }
+            ),
+            packet
+        );
     }
 }
