@@ -256,10 +256,9 @@
 //! <-- /close/12345/
 //! --> /close/12345/
 //! ```
+use std::io;
 use std::net::SocketAddr;
 use std::time::Duration;
-
-use parking_lot::Once;
 
 use tracing::{debug, info, warn};
 
@@ -335,13 +334,14 @@ impl
     }
 }
 
-pub fn init_tracing_subscriber() {
-    static TRACING_SUBSCRIBER_INIT: Once = Once::new();
-    TRACING_SUBSCRIBER_INIT.call_once(tracing_subscriber::fmt::init);
+#[derive(thiserror::Error, Debug)]
+pub enum LineReversalError {
+    #[error("io internal error")]
+    IoError(#[from] io::Error),
 }
 
 #[tracing::instrument(skip(socket))]
-pub async fn run<H: SocketHandler + Send>(socket: UdpSocket) -> Result<(), anyhow::Error> {
+pub async fn run<H: SocketHandler + Send>(socket: UdpSocket) -> Result<(), LineReversalError> {
     debug!(
         "socket addr: {:?} ttl: {:?}",
         socket.local_addr(),
@@ -360,7 +360,7 @@ pub async fn run<H: SocketHandler + Send>(socket: UdpSocket) -> Result<(), anyho
 }
 
 #[tracing::instrument(skip(stream))]
-async fn handle<R: Unpin, W: Unpin>(stream: Stream<R, W>) -> Result<(), anyhow::Error> {
+async fn handle<R: Unpin, W: Unpin>(stream: Stream<R, W>) -> Result<(), LineReversalError> {
     let (read, write) = split(stream);
     let mut read = BufReader::new(read);
     let mut write = BufWriter::new(write);

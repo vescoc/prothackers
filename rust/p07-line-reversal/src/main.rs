@@ -3,7 +3,14 @@ use tokio::net::UdpSocket;
 
 use tracing::info;
 
-use p07_line_reversal::{init_tracing_subscriber, run, DefaultSocketHandler};
+use parking_lot::Once;
+
+use p07_line_reversal::{run, DefaultSocketHandler};
+
+fn init_tracing_subscriber() {
+    static TRACING_SUBSCRIBER_INIT: Once = Once::new();
+    TRACING_SUBSCRIBER_INIT.call_once(tracing_subscriber::fmt::init);
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

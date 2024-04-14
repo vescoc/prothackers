@@ -68,10 +68,7 @@ impl<W: io::Write> SyncWrite<Numeric> for W {
 
         for i in (0..len).rev() {
             if self.write(&buffer[i..=i])? == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    anyhow::anyhow!("overflow"),
-                ));
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "overflow"));
             }
         }
 

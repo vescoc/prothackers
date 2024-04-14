@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use tokio::io::{split, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{split, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::ToSocketAddrs;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -9,13 +9,19 @@ use tokio::time::timeout;
 use tracing::{info, warn};
 
 use p07_line_reversal::{
-    init_tracing_subscriber,
     lrcp::packets::SyncWrite,
     lrcp::protocol::{Endpoint, Packet, Socket},
     run, DefaultSocketHandler,
 };
 
-const TIMEOUT: Duration = Duration::from_millis(200);
+const BUFFER: &[u8] = b"abcdefghijklmnopqrstuvxyz0123456789ABCDEFGHIJKLMNOPQRSTUVXYZ0123456789 !";
+
+const TIMEOUT: Duration = Duration::from_millis(1000);
+
+fn init_tracing_subscriber() {
+    static TRACING_SUBSCRIBER_INIT: parking_lot::Once = parking_lot::Once::new();
+    TRACING_SUBSCRIBER_INIT.call_once(tracing_subscriber::fmt::init);
+}
 
 struct UdpEndpoint<A>(UdpSocket, A);
 
@@ -139,6 +145,82 @@ async fn test_backslash() {
         .unwrap();
 
     assert_eq!(b"zab\\rab\\oof\n", &buffer[..len]);
+}
+
+#[tokio::test]
+async fn test_long_line() {
+    let (address, port) = spawn_app().await;
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+    let endpoint = UdpEndpoint(socket, format!("{address}:{port}"));
+
+    let stream = Socket::<DefaultSocketHandler>::connect(endpoint)
+        .await
+        .unwrap();
+    let (read, mut write) = split(stream);
+    let mut read = BufReader::new(read);
+
+    let data = BUFFER
+        .iter()
+        .cycle()
+        .take(9000)
+        .copied()
+        .collect::<Vec<_>>();
+
+    write.write_all(&data).await.unwrap();
+    write.write_u8(b'\n').await.unwrap();
+    timeout(Duration::from_secs(5000), write.flush())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut response = String::with_capacity(10000);
+
+    let _ = timeout(TIMEOUT, read.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(
+            &data
+                .iter()
+                .rev()
+                .chain(std::iter::once(&b'\n'))
+                .copied()
+                .collect::<Vec<_>>()
+        )
+        .into_owned(),
+        response
+    );
+
+    write.write_all(&data).await.unwrap();
+    write.write_u8(b'\n').await.unwrap();
+    timeout(Duration::from_secs(5000), write.flush())
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut response = String::with_capacity(10000);
+
+    let _ = timeout(TIMEOUT, read.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(
+            &data
+                .iter()
+                .rev()
+                .chain(std::iter::once(&b'\n'))
+                .copied()
+                .collect::<Vec<_>>()
+        )
+        .into_owned(),
+        response
+    );
 }
 
 async fn spawn_app() -> (String, u16) {

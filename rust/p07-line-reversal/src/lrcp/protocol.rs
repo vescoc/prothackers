@@ -760,8 +760,6 @@ mod tests {
 
     use tracing::Instrument;
 
-    use crate::init_tracing_subscriber;
-
     use super::*;
 
     const RETRASMISSION_TIMEOUT: Duration = Duration::from_millis(100);
@@ -772,6 +770,11 @@ mod tests {
         assert!(SESSION_EXPIRE_TIMEOUT.as_millis() > RETRASMISSION_TIMEOUT.as_millis() * 2);
     const _: () = assert!(RETRASMISSION_TIMEOUT.as_millis() >= DELAY.as_millis() * 2);
     const _: () = assert!(DELAY.as_millis() >= 5);
+
+    fn init_tracing_subscriber() {
+        static TRACING_SUBSCRIBER_INIT: parking_lot::Once = parking_lot::Once::new();
+        TRACING_SUBSCRIBER_INIT.call_once(tracing_subscriber::fmt::init);
+    }
 
     struct TestSocketHandler;
 
