@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::HashMap;
 use std::future::{self, Future};
 use std::hash::Hash;
@@ -16,7 +17,7 @@ use parking_lot::Mutex;
 
 use tracing::{debug, warn};
 
-use crate::lrcp::packets::{Numeric, Packet, Payload, Session};
+pub use crate::lrcp::packets::{Numeric, Packet, Payload, Session};
 
 pub trait Receiver<P> {
     fn recv(&mut self) -> impl Future<Output = Result<Option<P>, io::Error>> + Send;
@@ -84,9 +85,10 @@ impl<R: Unpin, W: Unpin> AsyncRead for Stream<R, W> {
             buffer.put_slice(downstream.buffer.drain(0..len).as_slice());
             Poll::Ready(Ok(()))
         } else if downstream.closed {
-            debug!("poll_read closed");
+            warn!("poll_read closed");
             Poll::Ready(Ok(()))
         } else {
+            debug!("poll_read waiting");
             downstream.waker = Some(ctx.waker().clone());
             Poll::Pending
         }
@@ -249,18 +251,21 @@ pub trait SocketHandler {
                         break;
                     }
 
-                    _r = upstream_notify.notified() => {
+                    _r = upstream_notify.notified(), if !closed => {
                         debug!("wakeup!");
                     }
 
-                    _r = upstream_shutdown_notify.notified() => {
+                    _r = upstream_shutdown_notify.notified(), if !closed => {
                         debug!("shutdown wakeup!");
                         closing = true;
                     }
 
-                    Ok(()) = send, if send_packet.is_some() => {
+                    Ok(()) = send, if send_packet.is_some() && !closed => {
                         debug!("sent packet");
                         last_packet_sent = send_packet.take();
+                        if closing {
+                            closed = true;
+                        }
                     }
 
                     packet = timeout(current_timeout, receiver.recv()) => {
@@ -274,16 +279,47 @@ pub trait SocketHandler {
 
                                 if closed || closing {
                                     sender.send(Packet::Close { session }).await.ok();
-                                } else if pos.0 == receiver_position {
-                                    {
-                                        let mut downstream = downstream.lock();
-                                        let len = data.write(&mut downstream.buffer);
-                                        receiver_position += len;
-                                    }
-
-                                    sender.send(Packet::Ack { session, length: Numeric(receiver_position) }).await.ok();
                                 } else {
-                                    warn!("ignored data packet with position: {pos:?}");
+                                    match pos.0.cmp(&receiver_position) {
+                                        cmp::Ordering::Equal => {
+                                            debug!("appending all data");
+                                            {
+                                                let mut downstream = downstream.lock();
+                                                let len = data.write(&mut downstream.buffer, 0);
+                                                receiver_position += len;
+                                                if len > 0 {
+                                                    if let Some(waker) = downstream.waker.take() {
+                                                        waker.wake();
+                                                    }
+                                                }
+                                            }
+
+                                            sender.send(Packet::Ack { session, length: Numeric(receiver_position) }).await.ok();
+                                        }
+
+                                        cmp::Ordering::Less => {
+                                            if pos.0 + data.0.len() as u32 > receiver_position {
+                                                debug!("appending partial data");
+
+                                                let mut downstream = downstream.lock();
+                                                let len = data.write(&mut downstream.buffer, receiver_position - pos.0);
+                                                receiver_position += len;
+                                                if len > 0 {
+                                                    if let Some(waker) = downstream.waker.take() {
+                                                        waker.wake();
+                                                    }
+                                                }
+                                            } else {
+                                                debug!("ignore old data");
+                                            }
+
+                                            sender.send(Packet::Ack { session, length: Numeric(receiver_position) }).await.ok();
+                                        }
+
+                                        cmp::Ordering::Greater => {
+                                            warn!("ignored data packet with position: {pos:?} > {receiver_position}");
+                                        }
+                                    }
                                 }
                             }
 
@@ -296,17 +332,46 @@ pub trait SocketHandler {
 
                                 if closed || closing {
                                     sender.send(Packet::Close { session }).await.ok();
-                                } else if sender_length == length.0 {
-                                    if (sender_length - sender_offset) > 0 {
-                                        let mut upstream = upstream.lock();
-                                        upstream.buffer.drain(..(sender_length - sender_offset) as usize);
-                                    }
-                                    sender_offset = sender_length;
-
-                                    need_ack = false;
-                                    current_timeout = Self::SESSION_EXPIRE_TIMEOUT;
                                 } else {
-                                    warn!("invalid ack {sender_length} != {length:?}");
+                                    match length.0.cmp(&sender_length) {
+                                        cmp::Ordering::Equal => {
+                                            sender_length = length.0;
+                                            if sender_length > sender_offset {
+                                                let mut upstream = upstream.lock();
+                                                if (sender_length - sender_offset) as usize > upstream.buffer.len() {
+                                                    warn!("invalid sender_length {sender_length} - {sender_offset} > {}", upstream.buffer.len());
+                                                } else {
+                                                    upstream.buffer.drain(..(sender_length - sender_offset) as usize);
+                                                }
+                                            }
+                                            sender_offset = sender_length;
+
+                                            need_ack = false;
+                                            current_timeout = Self::SESSION_EXPIRE_TIMEOUT;
+                                        }
+
+                                        cmp::Ordering::Less => {
+                                            if length.0 > sender_offset {
+                                                let mut upstream = upstream.lock();
+                                                if (length.0 - sender_offset) as usize > upstream.buffer.len() {
+                                                    warn!("invalid length {length:?} - {sender_offset} > {}", upstream.buffer.len());
+                                                } else {
+                                                    upstream.buffer.drain(..(length.0 - sender_offset) as usize);
+                                                }
+                                                sender_length = length.0;
+                                                sender_offset = sender_length;
+
+                                                need_ack = false;
+                                                current_timeout = Self::SESSION_EXPIRE_TIMEOUT;
+                                            } else {
+                                                warn!("invalid ack {length:?} <= {sender_offset}, too old");
+                                            }
+                                        }
+
+                                        cmp::Ordering::Greater => {
+                                            warn!("invalid ack {length:?} > {sender_length}");
+                                        }
+                                    }
                                 }
                             }
 
@@ -325,7 +390,23 @@ pub trait SocketHandler {
                                         closed = true;
                                     }
                                 } else {
-                                    warn!("TODO: Close");
+                                    sender.send(Packet::Close { session }).await.ok();
+
+                                    let upstream = &mut upstream.lock();
+
+                                    upstream.closed = true;
+
+                                    if let Some(waker) = upstream.waker.take() {
+                                        debug!("shutdown: wake upstream");
+                                        waker.wake();
+                                    }
+
+                                    if let Some(waker) = upstream.shutdown_waker.take() {
+                                        debug!("shutdown: wake shutdown upstream");
+                                        waker.wake();
+                                    }
+
+                                    break;
                                 }
                             }
 
@@ -353,11 +434,25 @@ pub trait SocketHandler {
 
                             Err(_) => {
                                 if last_recv_timestamp.elapsed() > Self::SESSION_EXPIRE_TIMEOUT {
-                                    warn!("TODO: session expired");
+                                    warn!("session expire");
 
-                                    closing = true;
-                                    closed = true;
-                                    need_ack = false;
+                                    sender.send(Packet::Close { session: handler_session }).await.ok();
+
+                                    let upstream = &mut upstream.lock();
+
+                                    upstream.closed = true;
+
+                                    if let Some(waker) = upstream.waker.take() {
+                                        debug!("shutdown: wake upstream");
+                                        waker.wake();
+                                    }
+
+                                    if let Some(waker) = upstream.shutdown_waker.take() {
+                                        debug!("shutdown: wake shutdown upstream");
+                                        waker.wake();
+                                    }
+
+                                    break;
                                 } else if need_ack {
                                     if let Some(packet) = last_packet_sent.take() {
                                         debug!("resend packet: {packet:?}");
@@ -446,8 +541,14 @@ impl Connection {
 
         tokio::spawn(async move {
             loop {
-                let packet = downstream_receiver.recv().await.unwrap();
-                downstream_sender.send((addr, packet)).await.unwrap();
+                if let Some(packet) = downstream_receiver.recv().await {
+                    if let Err(err) = downstream_sender.send((addr, packet)).await {
+                        warn!("sending downstream failed: {err}");
+                    }
+                } else {
+                    warn!("connection closed? exit");
+                    break;
+                }
             }
         });
 
@@ -553,23 +654,34 @@ impl<H: SocketHandler + Send> Socket<H> {
         tokio::spawn(async move {
             let mut connections = HashMap::new();
             loop {
-                let (addr, packet) = receiver.recv().await.unwrap().unwrap();
-                let session = packet.session();
+                match receiver.recv().await {
+                    Ok(Some((addr, packet))) => {
+                        let session = packet.session();
 
-                connections
-                    .entry((addr, session))
-                    .or_insert_with(|| {
-                        debug!("added connection ({addr:?}, {session:?})");
-                        Connection::new::<H, ADDR, W>(
-                            addr,
-                            session,
-                            downstream_sender.clone(),
-                            &listener_sender,
-                        )
-                    })
-                    .upstream_sender
-                    .send(packet)
-                    .unwrap();
+                        let result = connections
+                            .entry((addr, session))
+                            .or_insert_with(|| {
+                                debug!("added connection ({addr:?}, {session:?})");
+                                Connection::new::<H, ADDR, W>(
+                                    addr,
+                                    session,
+                                    downstream_sender.clone(),
+                                    &listener_sender,
+                                )
+                            })
+                            .upstream_sender
+                            .send(packet);
+                        if let Err(e) = result {
+                            warn!("sending upstream failed: {e}");
+                        }
+                    }
+                    Ok(None) => {
+                        warn!("sending upstream, got None packet");
+                    }
+                    Err(e) => {
+                        warn!("sending upstream, got error {e}");
+                    }
+                }
             }
         });
 

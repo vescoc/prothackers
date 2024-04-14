@@ -1,6 +1,13 @@
 use std::io;
 
-pub const BUFFER_SIZE: usize = 1000 - PACKET_DATA_PREFIX.len() - PACKET_POSTFIX.len();
+pub const BUFFER_SIZE: usize = 1000
+    - PACKET_DATA_PREFIX.len()
+    - (2 * PACKET_FIELD_SEPARATOR.len())
+    - PACKET_POSTFIX.len()
+    - (2 * MAX_NUMERIC_LENGTH)
+    - 50;
+
+const MAX_NUMERIC_LENGTH: usize = 10;
 
 const PACKET_POSTFIX: &[u8; 1] = b"/";
 const PACKET_FIELD_SEPARATOR: &[u8; 1] = b"/";
@@ -9,7 +16,11 @@ const PACKET_DATA_PREFIX: &[u8; 6] = b"/data/";
 const PACKET_ACK_PREFIX: &[u8; 5] = b"/ack/";
 const PACKET_CLOSE_PREFIX: &[u8; 7] = b"/close/";
 
-trait SyncWrite<T>: io::Write {
+pub trait SyncWrite<T>: io::Write {
+    /// Write the associate value
+    ///
+    /// # Errors
+    /// * error if there are some problems
     fn write_value(&mut self, value: &T) -> Result<usize, io::Error>;
 }
 
@@ -127,27 +138,13 @@ impl Payload {
         }
     }
 
-    pub(crate) fn write(&self, buffer: &mut Vec<u8>) -> u32 {
-        let mut len = 0;
-        let mut skip = false;
-        for b in self.0.bytes() {
-            match b {
-                b'\\' if !skip => {
-                    skip = true;
-                }
-                b'\\' if skip => {
-                    buffer.push(b'\\');
-                    len += 1;
-                }
-                c => {
-                    skip = false;
-                    buffer.push(c);
-                    len += 1;
-                }
-            }
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn write(&self, buffer: &mut Vec<u8>, skip: u32) -> u32 {
+        for b in self.0.bytes().skip(skip as usize) {
+            buffer.push(b);
         }
 
-        len
+        self.0.bytes().len() as u32 - skip
     }
 }
 
@@ -267,7 +264,7 @@ impl TryFrom<&[u8]> for Packet {
     type Error = PacketError;
 
     fn try_from(buffer: &[u8]) -> Result<Self, Self::Error> {
-        if buffer.ends_with(b"/") {
+        if buffer.ends_with(b"/") && buffer.len() < 1000 {
             if buffer.starts_with(PACKET_CONNECT_PREFIX) {
                 let (session, buffer) = Numeric::parse(&buffer[PACKET_CONNECT_PREFIX.len()..])?;
                 if buffer != b"/" {
