@@ -3,6 +3,8 @@ use tokio::net::UdpSocket;
 
 use tracing::info;
 
+use p04_unusual_database_program::run;
+
 #[derive(clap::Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -23,5 +25,5 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let socket = UdpSocket::bind(&format!("{}:{}", args.address, args.port)).await?;
 
-    p04_unusual_database_program::run(socket).await
+    Ok(run(socket).await?)
 }
