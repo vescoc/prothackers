@@ -17,14 +17,17 @@ async fn test_session() {
 
     socket.send(b"foo").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
-    assert_eq!("bar", std::str::from_utf8(&buffer[0..received]).unwrap());
+    assert_eq!(
+        "foo=bar",
+        std::str::from_utf8(&buffer[0..received]).unwrap()
+    );
 
     socket.send(b"foo=bar=baz").await.unwrap();
 
     socket.send(b"foo").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
     assert_eq!(
-        "bar=baz",
+        "foo=bar=baz",
         std::str::from_utf8(&buffer[0..received]).unwrap()
     );
 
@@ -32,26 +35,26 @@ async fn test_session() {
 
     socket.send(b"foo").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
-    assert_eq!("", std::str::from_utf8(&buffer[0..received]).unwrap());
+    assert_eq!("foo=", std::str::from_utf8(&buffer[0..received]).unwrap());
 
     socket.send(b"foo===").await.unwrap();
 
     socket.send(b"foo").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
-    assert_eq!("==", std::str::from_utf8(&buffer[0..received]).unwrap());
+    assert_eq!("foo===", std::str::from_utf8(&buffer[0..received]).unwrap());
 
     socket.send(b"=foo").await.unwrap();
 
     socket.send(b"").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
-    assert_eq!("foo", std::str::from_utf8(&buffer[0..received]).unwrap());
+    assert_eq!("=foo", std::str::from_utf8(&buffer[0..received]).unwrap());
 
     socket.send(b"version=ignored").await.unwrap();
 
     socket.send(b"version").await.unwrap();
     let received = socket.recv(&mut buffer).await.unwrap();
     assert_eq!(
-        "unusual-database-program 1.0.0",
+        "version=unusual-database-program 1.0.0",
         std::str::from_utf8(&buffer[0..received]).unwrap()
     );
 }
