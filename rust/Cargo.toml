@@ -7,6 +7,7 @@ members = [
     "p04-unusual-database-program",
     "p05-mob-in-the-middle",
     "p06-speed-daemon",
+    "p07-line-reversal",
 ]
 resolver = "2"
 
@@ -17,12 +18,14 @@ edition = "2021"
 
 [workspace.dependencies]
 futures = "0.3.30"
-tokio = { version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util"] }
+tokio = { version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util", "sync"] }
 clap = { version = "4.5.3", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
 anyhow = "1.0.80"
 thiserror = "1.0.58"
+parking_lot = "0.12.1"
+rand = "0.8.5"
 
 [workspace.lints.clippy]
 pedantic = "deny"
