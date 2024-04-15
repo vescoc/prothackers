@@ -32,5 +32,5 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let socket = UdpSocket::bind(&format!("{}:{}", args.address, args.port)).await?;
 
-    run::<DefaultSocketHandler>(socket).await
+    Ok(run::<DefaultSocketHandler>(socket).await?)
 }

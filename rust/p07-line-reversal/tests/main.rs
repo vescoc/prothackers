@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use tokio::io::{split, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -8,6 +9,8 @@ use tokio::time::timeout;
 
 use tracing::{info, warn};
 
+use rand::Rng;
+
 use p07_line_reversal::{
     lrcp::packets::SyncWrite,
     lrcp::protocol::{Endpoint, Packet, Socket},
@@ -17,17 +20,53 @@ use p07_line_reversal::{
 const BUFFER: &[u8] = b"abcdefghijklmnopqrstuvxyz0123456789ABCDEFGHIJKLMNOPQRSTUVXYZ0123456789 !";
 
 const TIMEOUT: Duration = Duration::from_millis(1000);
+const LONG_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn init_tracing_subscriber() {
     static TRACING_SUBSCRIBER_INIT: parking_lot::Once = parking_lot::Once::new();
     TRACING_SUBSCRIBER_INIT.call_once(tracing_subscriber::fmt::init);
 }
 
-struct UdpEndpoint<A>(UdpSocket, A);
+trait ForgetPacket {
+    fn forget_packet() -> bool;
+}
 
-impl<A: ToSocketAddrs + Send + Sync + 'static>
-    Endpoint<Packet, mpsc::UnboundedReceiver<Packet>, mpsc::UnboundedSender<Packet>>
-    for UdpEndpoint<A>
+struct NoForgetPacket;
+
+impl ForgetPacket for NoForgetPacket {
+    fn forget_packet() -> bool {
+        false
+    }
+}
+
+struct ForgetPacket25;
+
+impl ForgetPacket for ForgetPacket25 {
+    fn forget_packet() -> bool {
+        let mut rng = rand::thread_rng();
+        rng.gen_range(0..100) < 35
+    }
+}
+
+struct UdpEndpoint<FP, A>(UdpSocket, A, PhantomData<FP>);
+
+impl<A> UdpEndpoint<NoForgetPacket, A> {
+    fn new(socket: UdpSocket, addr: A) -> Self {
+        Self(socket, addr, PhantomData)
+    }
+}
+
+impl<A> UdpEndpoint<ForgetPacket25, A> {
+    fn new_25(socket: UdpSocket, addr: A) -> Self {
+        Self(socket, addr, PhantomData)
+    }
+}
+
+impl<FP, A> Endpoint<Packet, mpsc::UnboundedReceiver<Packet>, mpsc::UnboundedSender<Packet>>
+    for UdpEndpoint<FP, A>
+where
+    A: ToSocketAddrs + Send + Sync + 'static,
+    FP: ForgetPacket,
 {
     fn split(
         self,
@@ -46,9 +85,13 @@ impl<A: ToSocketAddrs + Send + Sync + 'static>
                         let buffer = &buffer[0..len];
 
                         if let Ok(packet) = Packet::try_from(buffer) {
-                            info!("client --> send upstream packet {packet:?}");
-                            if let Err(e) = upstream_sender.send(packet) {
-                                warn!("error on send upstream: {e:?}");
+                            if FP::forget_packet() {
+                                info!("FORGET client --> send upstream packet {packet:?}");
+                            } else {
+                                info!("client --> send upstream packet {packet:?}");
+                                if let Err(e) = upstream_sender.send(packet) {
+                                    warn!("error on send upstream: {e:?}");
+                                }
                             }
                         } else {
                             warn!("invalid packet: {buffer:?}");
@@ -56,15 +99,19 @@ impl<A: ToSocketAddrs + Send + Sync + 'static>
                     }
 
                     Some(packet) = downstream_receiver.recv() => {
-                        info!("client <-- send downstream packet {packet:?}");
+                        if FP::forget_packet() {
+                            info!("FORGET client <-- send downstream packet {packet:?}");
+                        } else {
+                            info!("client <-- send downstream packet {packet:?}");
 
-                        let mut buffer = [0_u8; 1024];
-                        let mut b = buffer.as_mut_slice();
+                            let mut buffer = [0_u8; 1024];
+                            let mut b = buffer.as_mut_slice();
 
-                        let len = b.write_value(&packet).unwrap();
+                            let len = b.write_value(&packet).unwrap();
 
-                        if let Err(e) = self.0.send_to(&buffer[..len], &self.1).await {
-                            warn!("cannot send packet: {e:?}");
+                            if let Err(e) = self.0.send_to(&buffer[..len], &self.1).await {
+                                warn!("cannot send packet: {e:?}");
+                            }
                         }
                     }
                 }
@@ -81,7 +128,7 @@ async fn test_session() {
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-    let endpoint = UdpEndpoint(socket, format!("{address}:{port}"));
+    let endpoint = UdpEndpoint::new(socket, format!("{address}:{port}"));
 
     let stream = Socket::<DefaultSocketHandler>::connect(endpoint)
         .await
@@ -117,7 +164,7 @@ async fn test_backslash() {
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-    let endpoint = UdpEndpoint(socket, format!("{address}:{port}"));
+    let endpoint = UdpEndpoint::new(socket, format!("{address}:{port}"));
 
     let stream = Socket::<DefaultSocketHandler>::connect(endpoint)
         .await
@@ -153,7 +200,7 @@ async fn test_long_line() {
 
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-    let endpoint = UdpEndpoint(socket, format!("{address}:{port}"));
+    let endpoint = UdpEndpoint::new(socket, format!("{address}:{port}"));
 
     let stream = Socket::<DefaultSocketHandler>::connect(endpoint)
         .await
@@ -170,10 +217,7 @@ async fn test_long_line() {
 
     write.write_all(&data).await.unwrap();
     write.write_u8(b'\n').await.unwrap();
-    timeout(Duration::from_secs(5000), write.flush())
-        .await
-        .unwrap()
-        .unwrap();
+    timeout(LONG_TIMEOUT, write.flush()).await.unwrap().unwrap();
 
     let mut response = String::with_capacity(10000);
 
@@ -197,14 +241,93 @@ async fn test_long_line() {
 
     write.write_all(&data).await.unwrap();
     write.write_u8(b'\n').await.unwrap();
-    timeout(Duration::from_secs(5000), write.flush())
-        .await
-        .unwrap()
-        .unwrap();
+    timeout(LONG_TIMEOUT, write.flush()).await.unwrap().unwrap();
 
     let mut response = String::with_capacity(10000);
 
     let _ = timeout(TIMEOUT, read.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(
+            &data
+                .iter()
+                .rev()
+                .chain(std::iter::once(&b'\n'))
+                .copied()
+                .collect::<Vec<_>>()
+        )
+        .into_owned(),
+        response
+    );
+}
+
+#[tokio::test]
+async fn test_long_line_25() {
+    let (address, port) = spawn_app().await;
+
+    let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+    let endpoint = UdpEndpoint::new_25(socket, format!("{address}:{port}"));
+
+    let stream = Socket::<DefaultSocketHandler>::connect(endpoint)
+        .await
+        .unwrap();
+    let (read, mut write) = split(stream);
+    let mut read = BufReader::new(read);
+
+    let data = BUFFER
+        .iter()
+        .cycle()
+        .take(9000)
+        .copied()
+        .collect::<Vec<_>>();
+
+    timeout(LONG_TIMEOUT, write.write_all(&data))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(LONG_TIMEOUT, write.write_u8(b'\n'))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(LONG_TIMEOUT, write.flush()).await.unwrap().unwrap();
+
+    let mut response = String::with_capacity(10000);
+
+    let _ = timeout(LONG_TIMEOUT, read.read_line(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        String::from_utf8_lossy(
+            &data
+                .iter()
+                .rev()
+                .chain(std::iter::once(&b'\n'))
+                .copied()
+                .collect::<Vec<_>>()
+        )
+        .into_owned(),
+        response
+    );
+
+    timeout(LONG_TIMEOUT, write.write_all(&data))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(LONG_TIMEOUT, write.write_u8(b'\n'))
+        .await
+        .unwrap()
+        .unwrap();
+    timeout(LONG_TIMEOUT, write.flush()).await.unwrap().unwrap();
+
+    let mut response = String::with_capacity(10000);
+
+    let _ = timeout(LONG_TIMEOUT, read.read_line(&mut response))
         .await
         .unwrap()
         .unwrap();

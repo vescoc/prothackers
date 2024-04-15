@@ -271,7 +271,8 @@ pub mod lrcp;
 use lrcp::packets::SyncWrite;
 use lrcp::protocol::{Endpoint, Packet, Socket, SocketHandler, Stream};
 
-const RETRASMISSION_TIMEOUT: Duration = Duration::from_secs(3);
+//const RETRASMISSION_TIMEOUT: Duration = Duration::from_secs(3);
+const RETRASMISSION_TIMEOUT: Duration = Duration::from_millis(500);
 const SESSION_EXPIRE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct DefaultSocketHandler;

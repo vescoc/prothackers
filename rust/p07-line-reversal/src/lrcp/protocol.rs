@@ -369,7 +369,9 @@ pub trait SocketHandler {
                                         }
 
                                         cmp::Ordering::Greater => {
-                                            warn!("invalid ack {length:?} > {sender_length}");
+                                            warn!("invalid ack {length:?} > {sender_length}, closing");
+
+                                            closing = true;
                                         }
                                     }
                                 }
