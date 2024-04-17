@@ -44,7 +44,7 @@ struct ForgetPacket25;
 impl ForgetPacket for ForgetPacket25 {
     fn forget_packet() -> bool {
         let mut rng = rand::thread_rng();
-        rng.gen_range(0..100) < 35
+        rng.gen_range(0..100) < 25
     }
 }
 
