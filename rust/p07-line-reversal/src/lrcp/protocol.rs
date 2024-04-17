@@ -15,7 +15,7 @@ use tokio::time::{timeout, Instant};
 
 use parking_lot::Mutex;
 
-use tracing::{debug, warn};
+use tracing::{debug, warn, Instrument};
 
 pub use crate::lrcp::packets::{Numeric, Packet, Payload, Session};
 
@@ -44,14 +44,14 @@ pub trait Endpoint<P, R: Receiver<P>, W: Sender<P>> {
     fn split(self) -> (R, W);
 }
 
-struct StreamUpstreamPart {
+pub struct StreamUpstreamPart {
     closed: bool,
     buffer: Vec<u8>,
     waker: Option<Waker>,
     shutdown_waker: Option<Waker>,
 }
 
-struct StreamDownstreamPart {
+pub struct StreamDownstreamPart {
     closed: bool,
     buffer: Vec<u8>,
     waker: Option<Waker>,
@@ -178,15 +178,6 @@ pub trait SocketHandler {
     const SESSION_EXPIRE_TIMEOUT: Duration;
 
     #[allow(clippy::cast_possible_truncation, clippy::too_many_arguments)]
-    #[tracing::instrument(skip(
-        downstream,
-        exit_notify,
-        upstream_notify,
-        upstream_shutdown_notify,
-        upstream,
-        receiver,
-        sender
-    ))]
     fn lrcp_handler<R, W>(
         start_connection: bool,
         handler_session: Numeric,
@@ -202,7 +193,7 @@ pub trait SocketHandler {
         R: Receiver<Packet> + Send + 'static,
         W: Sender<Packet> + Send + 'static,
     {
-        async {
+        async move {
             let mut closing = false;
             let mut closed = false;
 
@@ -516,7 +507,7 @@ pub trait SocketHandler {
                     }
                 }
             }
-        }
+        }.instrument(tracing::info_span!("lcrp_handler"))
     }
 }
 
@@ -765,7 +756,7 @@ mod tests {
     use super::*;
 
     const RETRASMISSION_TIMEOUT: Duration = Duration::from_millis(100);
-    const SESSION_EXPIRE_TIMEOUT: Duration = Duration::from_millis(600);
+    const SESSION_EXPIRE_TIMEOUT: Duration = Duration::from_millis(1000);
     const DELAY: Duration = Duration::from_millis(50);
 
     const _: () =
@@ -840,7 +831,7 @@ mod tests {
     async fn test_echo_connect() {
         init_tracing_subscriber();
 
-        let span = tracing::info_span!("test_connect");
+        let span = tracing::info_span!("test_echo_connect");
 
         async {
             let echo_endpoint = EchoEndpoint;
