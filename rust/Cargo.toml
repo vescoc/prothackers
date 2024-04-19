@@ -8,6 +8,7 @@ members = [
     "p05-mob-in-the-middle",
     "p06-speed-daemon",
     "p07-line-reversal",
+    "p08-insecure-sockets-layer",
 ]
 resolver = "2"
 
@@ -19,6 +20,9 @@ edition = "2021"
 [workspace.dependencies]
 futures = "0.3.30"
 tokio = { version = "1.36.0", features = ["macros", "rt", "rt-multi-thread", "time", "net", "io-util", "sync"] }
+tokio-util = { version = "0.7.10", features = ["codec"] }
+tokio-stream = "0.1.15"
+bytes = "1"
 clap = { version = "4.5.3", features = ["derive"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
