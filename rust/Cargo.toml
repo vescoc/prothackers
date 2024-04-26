@@ -9,6 +9,7 @@ members = [
     "p06-speed-daemon",
     "p07-line-reversal",
     "p08-insecure-sockets-layer",
+    "p09-job-centre",
 ]
 resolver = "2"
 
@@ -30,6 +31,8 @@ anyhow = "1.0.80"
 thiserror = "1.0.58"
 parking_lot = "0.12.1"
 rand = "0.8.5"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.116"
 
 [workspace.lints.clippy]
 pedantic = "deny"

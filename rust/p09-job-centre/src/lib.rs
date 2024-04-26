@@ -1,0 +1,301 @@
+//! # Job Centre.
+//!
+//! Your mission, should you choose to accept it, is to write a new
+//! general-purpose job queue server. You'll need to write a server
+//! that will accept jobs with numeric priorities, store them in named
+//! queues, and hand them out, highest-priority first, to clients that
+//! request jobs to work on.
+//!
+//! ## Protocol
+//!
+//! Clients connect to the server using TCP and issue requests. Each
+//! request from a client results in a single response from the
+//! server, and responses must be sent in the same order as the
+//! corresponding requests. Each request and each response is a JSON
+//! object terminated by an ASCII newline character ("\n"). There can
+//! be multiple requests over one connected session.
+//!
+//! All requests contain a field named request which contains a string
+//! naming the request type ("put", "get", "delete", or "abort").
+//!
+//! All responses contain a field named status which contains one of
+//! the strings "ok", "error", or "no-job".
+//!
+//! Where a request does not match the specification (i.e. if it is
+//! not valid JSON, is missing mandatory fields, or has illegal values
+//! in any fields, or meets any other criteria described as "an
+//! error"), the server must send back an error response, which has
+//! the string "error" in the status field, and optionally an error
+//! field containing a textual error message, for example:
+//!
+//! ```raw
+//! {"status":"error","error":"Unrecognised request type."}
+//! ```
+//!
+//! The server must not close the connection in response to an invalid request.
+//!
+//! ## Requests
+//!
+//! In all of the examples, "<--" denotes requests and "-->" denotes responses.
+//!
+//! ### put
+//!
+//! Examples:
+//!
+//! ```raw
+//! <-- {"request":"put","queue":"queue1","job":{...},"pri":123}
+//! --> {"status":"ok","id":12345}
+//! ```
+//!
+//! Insert the given job into the given queue with the given priority.
+//!
+//! The "queue" field must contain a valid queue name. The "job" field
+//! can contain any JSON object. The "pri" field must contain a valid
+//! priority.
+//!
+//! The server must assign the job a unique ID, returned in the "id"
+//! field of the response.
+//!
+//! ### get
+//!
+//! Examples:
+//!
+//! ```raw
+//! <-- {"request":"get","queues":["queue1","queue2",...],"wait":true}
+//! --> {"status":"ok","id":12345,"job":{...},"pri":123,"queue":"queue1"}
+//! ```
+//!
+//! ```raw
+//! <-- {"request":"get","queues":["queue3","queue4",...]}
+//! --> {"status":"no-job"}
+//! ```
+//!
+//! Retrieve the highest-priority job that is currently waiting in any
+//! of the listed queues, and remove it from its queue. The highest
+//! priority is the one with the highest numeric value (100 is a
+//! higher priority than 90). Where multiple jobs share the same
+//! priority, it is fine to return them in any order.
+//!
+//! The "queues" field must contain a list of valid queue names.
+//!
+//! #### No job in the queue
+//!
+//! If there is currently no job waiting in any of the listed queues,
+//! and the optional wait flag is present and true, then the server
+//! must not send any response until there is a job available, at
+//! which point that job must be returned to one of the "waiting"
+//! clients.
+//!
+//! If there is currently no job waiting in any of the listed queues,
+//! and the optional wait flag is absent or false, then the server
+//! must send a response with the no-job status.
+//!
+//! #### Job available
+//!
+//! When a job is returned from a "get" request, the response must
+//! contain the fields "queue", "pri", and "job", matching those from
+//! the "put" request that initially created the job, in addition to
+//! the "id" field, matching the one returned in the response to the
+//! initial "put" request.
+//!
+//! Once a job is returned, the requesting client is considered to be
+//! working on that job, until one of the following occurs:
+//!
+//! - the job is deleted by any client
+//!
+//! - the job is explicitly aborted by the client working on it
+//!
+//! - the job is automatically aborted when the client working on it
+//! disconnects
+//!
+//! ### delete
+//!
+//! Examples:
+//!
+//! ```raw
+//! <-- {"request":"delete","id":12345}
+//! --> {"status":"ok"}
+//! ```
+//!
+//! ```raw
+//! <-- {"request":"delete","id":12346}
+//! --> {"status":"no-job"}
+//! ```
+//!
+//! Delete the job with the given id, so that it can never be
+//! retrieved, aborted, or deleted again. Valid from any client.
+//!
+//! If a client attempts to delete a job ID that has not been
+//! allocated, or that has already been deleted, send a response with
+//! the no-job status.
+//!
+//! Once a job has been deleted it ceases to exist. In particular this
+//! means it can no longer be aborted or deleted by any client, and
+//! any client that was previously working on the job (even if
+//! different to the client that deleted it) is no longer considered
+//! to be working on it.
+//!
+//! ### abort
+//!
+//! ```raw
+//! <-- {"request":"abort","id":12345}
+//! --> {"status":"ok"}
+//! ```
+//!
+//! ```raw
+//! <-- {"request":"abort","id":12346}
+//! --> {"status":"no-job"}
+//! ```
+//!
+//! Put the job with the given id back in its queue. This request is
+//! only valid from the client that is currently working on that
+//! job. It is an error for any client to attempt to abort a job that
+//! it is not currently working on.
+//!
+//! If a client attempts to abort a job ID that has not been assigned,
+//! or that has already been deleted, send a response with the no-job
+//! status.
+//!
+//! In addition to explicit aborting with the abort request, all jobs
+//! that a client is working on are automatically aborted when that
+//! client disconnects.
+//!
+//! ## Example session
+//!
+//! In this example, the client inserts a job into queue1, retrieves
+//! the job from the queue, aborts it, retrieves the same job again,
+//! deletes it, and finally attempts to retrieve another job.
+//!
+//! ```raw
+//! <-- {"request":"put","queue":"queue1","job":{"title":"example-job"},"pri":123}
+//! --> {"status":"ok","id":12345}
+//! <-- {"request":"get","queues":["queue1"]}
+//! --> {"status":"ok","id":12345,"job":{"title":"example-job"},"pri":123,"queue":"queue1"}
+//! <-- {"request":"abort","id":12345}
+//! --> {"status":"ok"}
+//! <-- {"request":"get","queues":["queue1"]}
+//! --> {"status":"ok","id":12345,"job":{"title":"example-job"},"pri":123,"queue":"queue1"}
+//! <-- {"request":"delete","id":12345}
+//! --> {"status":"ok"}
+//! <-- {"request":"get","queues":["queue1"]}
+//! --> {"status":"no-job"}
+//! <-- {"request":"get","queues":["queue1"],"wait":true}
+//! [...]
+//! ```
+//!
+//! ## Limits
+//!
+//! Support at least 1000 simultaneous clients and at least 50000
+//! simultaneous pending jobs.
+//!
+//! A job can be any JSON object.
+//!
+//! A job ID is an integer and must uniquely identify a job, and the
+//! server may not reuse a job ID even after the job is deleted (but
+//! it's fine to reuse them every time the server restarts).
+//!
+//! A queue name is any JSON string.
+//!
+//! A job priority is any non-negative integer.
+#![allow(unused_variables, unused_imports)]
+
+use std::io;
+
+use futures::{SinkExt, StreamExt};
+
+use tokio::io::{BufReader, BufWriter};
+use tokio::net::{TcpListener, TcpStream};
+
+use tokio_util::codec::{FramedRead, FramedWrite};
+
+use tracing::{debug, info, instrument, warn};
+
+pub mod job_centre;
+pub mod protocol;
+
+use job_centre::{JobCentre, JobRef, Worker};
+use protocol::{Request, Response};
+
+#[instrument(skip(listener))]
+pub async fn run(listener: TcpListener) -> Result<(), io::Error> {
+    let job_centre = JobCentre::new();
+
+    loop {
+        let (stream, remote_addr) = listener.accept().await?;
+
+        info!("remote: {remote_addr:?}");
+
+        let worker = job_centre.make_worker();
+
+        tokio::spawn(handle_client(stream, worker));
+    }
+}
+
+#[instrument(skip(stream, worker))]
+async fn handle_client(mut stream: TcpStream, mut worker: Worker) -> Result<(), io::Error> {
+    debug!("start");
+
+    let (read, write) = stream.split();
+    let mut read = FramedRead::new(BufReader::new(read), protocol::RequestCodec::new());
+    let mut write = FramedWrite::new(BufWriter::new(write), protocol::ResponseCodec::new());
+
+    while let Some(request) = read.next().await {
+        debug!("request: {request:?}");
+
+        match request {
+            Ok(Request::Put {
+                queue,
+                job,
+                priority,
+            }) => {
+                let id = worker.put(queue, job, priority);
+                write.send(Response::Id(id)).await.ok();
+                write.flush().await.ok();
+            }
+
+            Ok(Request::Get { queues, wait }) => {
+                match worker.get(&queues, wait).await {
+                    Ok(JobRef(id, job, priority, queue)) => {
+                        write
+                            .send(Response::JobRef(id, job, priority, queue))
+                            .await
+                            .ok();
+                    }
+                    Err(_) => {
+                        write.send(Response::NoJob).await.ok();
+                    }
+                }
+                write.flush().await.ok();
+            }
+
+            Ok(Request::Delete { id }) => {
+                if worker.delete(id).is_ok() {
+                    write.send(Response::Ok).await.ok();
+                } else {
+                    write.send(Response::NoJob).await.ok();
+                }
+                write.flush().await.ok();
+            }
+
+            Ok(Request::Abort { id }) => {
+                if worker.abort(id).is_ok() {
+                    write.send(Response::Ok).await.ok();
+                } else {
+                    write.send(Response::NoJob).await.ok();
+                }
+                write.flush().await.ok();
+            }
+
+            Err(err) => {
+                warn!("invalid request: {err}");
+                write
+                    .send(Response::Error("invalid request".to_string()))
+                    .await
+                    .ok();
+                write.flush().await.ok();
+            }
+        }
+    }
+
+    Ok(())
+}
