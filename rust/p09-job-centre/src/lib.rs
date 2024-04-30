@@ -197,8 +197,6 @@
 //! A queue name is any JSON string.
 //!
 //! A job priority is any non-negative integer.
-#![allow(unused_variables, unused_imports)]
-
 use std::io;
 
 use futures::{SinkExt, StreamExt};

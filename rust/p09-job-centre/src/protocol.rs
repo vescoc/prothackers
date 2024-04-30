@@ -1,8 +1,6 @@
 use std::cmp;
 use std::io;
 
-use tracing::{debug, instrument};
-
 use tokio_util::codec::{Decoder, Encoder};
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -407,7 +405,7 @@ impl Encoder<Response> for ResponseCodec {
 
 #[cfg(test)]
 mod tests {
-    use futures::{Sink, SinkExt, StreamExt, TryStreamExt};
+    use futures::{SinkExt, TryStreamExt};
 
     use tokio_util::codec::{FramedRead, FramedWrite};
 
