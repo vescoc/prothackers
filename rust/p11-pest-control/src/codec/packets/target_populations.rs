@@ -2,26 +2,43 @@ use std::ops::ControlFlow;
 
 use bytes::BytesMut;
 
-use crate::codec::{packets, Error, Parser, RawPacketDecoder, Validator};
+use crate::codec::{packets, Error, Parser, RawPacketDecoder, Validator, Writer};
 
 #[derive(Debug, PartialEq)]
-pub struct Packet<S> {
+pub struct Packet {
     pub site: u32,
-    pub populations: Vec<Population<S>>,
+    pub populations: Vec<Population>,
+}
+
+impl Packet {
+    #[allow(clippy::cast_possible_truncation)]
+    pub(crate) fn write_packet(&self) -> Vec<u8> {
+        let mut writer = Writer::new(0x54);
+
+        writer.write_u32(self.site);
+        writer.write_u32(self.populations.len() as u32);
+        for Population { species, min, max } in &self.populations {
+            writer.write_str(species);
+            writer.write_u32(*min);
+            writer.write_u32(*max);
+        }
+
+        writer.finalize()
+    }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct Population<S> {
-    pub species: S,
-    min: u32,
-    max: u32,
+pub struct Population {
+    pub species: String,
+    pub min: u32,
+    pub max: u32,
 }
 
 #[derive(Debug, PartialEq)]
 pub struct PacketDecoder;
 
 impl RawPacketDecoder for PacketDecoder {
-    type Decoded<'a> = Packet<&'a str>;
+    type Decoded<'a> = Packet;
 
     fn decode(data: &[u8]) -> Self::Decoded<'_> {
         let mut parser = Parser::new(data);
@@ -33,7 +50,7 @@ impl RawPacketDecoder for PacketDecoder {
         let len = parser.read_u32() as usize;
         let mut populations = Vec::with_capacity(len);
         for _ in 0..len {
-            let species = parser.read_str();
+            let species = parser.read_str().to_string();
             let min = parser.read_u32();
             let max = parser.read_u32();
 
@@ -87,24 +104,26 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
         return b;
     }
 
-    let raw_packet = validator.raw_packet()?;
+    let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::TargetPopulations(raw_packet)))
+    Ok(Some(packets::Packet::TargetPopulations(
+        raw_packet.decode(),
+    )))
 }
 
 #[cfg(test)]
 mod tests {
-    use futures::TryStreamExt;
+    use futures::{SinkExt, TryStreamExt};
 
-    use tokio_util::codec::FramedRead;
+    use tokio_util::codec::{FramedRead, FramedWrite};
 
-    use crate::codec::packets::PacketDecoder;
+    use crate::codec::packets::PacketCodec;
     use crate::tests::init_tracing_subscriber;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_packet() {
+    async fn test_read() {
         init_tracing_subscriber();
 
         let data = [
@@ -114,7 +133,7 @@ mod tests {
             0x0a, 0x80,
         ]
         .as_slice();
-        let mut reader = FramedRead::new(data, PacketDecoder::new());
+        let mut reader = FramedRead::new(data, PacketCodec::new());
 
         let packets::Packet::TargetPopulations(raw_packet) =
             reader.try_next().await.unwrap().unwrap()
@@ -127,18 +146,57 @@ mod tests {
                 site: 12345,
                 populations: vec![
                     Population {
-                        species: "dog",
+                        species: "dog".to_string(),
                         min: 1,
                         max: 3,
                     },
                     Population {
-                        species: "rat",
+                        species: "rat".to_string(),
                         min: 0,
                         max: 10,
                     },
                 ],
             },
-            raw_packet.decode()
+            raw_packet
         );
+    }
+
+    #[tokio::test]
+    async fn test_write() {
+        init_tracing_subscriber();
+
+        let mut buffer = vec![];
+        {
+            let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
+
+            writer
+                .send(packets::Packet::TargetPopulations(Packet {
+                    site: 12345,
+                    populations: vec![
+                        Population {
+                            species: "dog".to_string(),
+                            min: 1,
+                            max: 3,
+                        },
+                        Population {
+                            species: "rat".to_string(),
+                            min: 0,
+                            max: 10,
+                        },
+                    ],
+                }))
+                .await
+                .unwrap();
+        }
+
+        let data = [
+            0x54, 0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x30, 0x39, 0x00, 0x00, 0x00, 0x02, 0x00,
+            0x00, 0x00, 0x03, 0x64, 0x6f, 0x67, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03,
+            0x00, 0x00, 0x00, 0x03, 0x72, 0x61, 0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x0a, 0x80,
+        ]
+        .as_slice();
+
+        assert_eq!(data, buffer);
     }
 }

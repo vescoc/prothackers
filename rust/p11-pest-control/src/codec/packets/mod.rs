@@ -1,10 +1,10 @@
-use tokio_util::codec::Decoder;
+use tokio_util::codec::{Decoder, Encoder};
 
 use bytes::BytesMut;
 
 use tracing::instrument;
 
-use super::{Error, RawPacket};
+use super::Error;
 
 pub mod create_policy;
 pub mod delete_policy;
@@ -18,33 +18,33 @@ pub mod target_populations;
 
 #[derive(Debug, PartialEq)]
 pub enum Packet {
-    Hello(RawPacket<hello::PacketDecoder>),
-    Error(RawPacket<error::PacketDecoder>),
-    Ok(RawPacket<ok::PacketDecoder>),
-    DialAuthority(RawPacket<dial_authority::PacketDecoder>),
-    TargetPopulations(RawPacket<target_populations::PacketDecoder>),
-    CreatePolicy(RawPacket<create_policy::PacketDecoder>),
-    DeletePolicy(RawPacket<delete_policy::PacketDecoder>),
-    PolicyResult(RawPacket<policy_result::PacketDecoder>),
-    SiteVisit(RawPacket<site_visit::PacketDecoder>),
+    Hello(hello::Packet),
+    Error(error::Packet),
+    Ok(ok::Packet),
+    DialAuthority(dial_authority::Packet),
+    TargetPopulations(target_populations::Packet),
+    CreatePolicy(create_policy::Packet),
+    DeletePolicy(delete_policy::Packet),
+    PolicyResult(policy_result::Packet),
+    SiteVisit(site_visit::Packet),
 }
 
-pub struct PacketDecoder;
+pub struct PacketCodec;
 
-impl PacketDecoder {
+impl PacketCodec {
     #[must_use]
     pub fn new() -> Self {
         Self
     }
 }
 
-impl Default for PacketDecoder {
+impl Default for PacketCodec {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Decoder for PacketDecoder {
+impl Decoder for PacketCodec {
     type Item = Packet;
     type Error = Error;
 
@@ -63,5 +63,27 @@ impl Decoder for PacketDecoder {
             Some(c) => Err(Error::UnknownPacket(*c)),
             None => Ok(None),
         }
+    }
+}
+
+impl Encoder<Packet> for PacketCodec {
+    type Error = Error;
+
+    fn encode(&mut self, packet: Packet, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        let raw_packet = match packet {
+            Packet::Hello(packet) => packet.write_packet(),
+            Packet::Error(packet) => packet.write_packet(),
+            Packet::Ok(packet) => packet.write_packet(),
+            Packet::DialAuthority(packet) => packet.write_packet(),
+            Packet::TargetPopulations(packet) => packet.write_packet(),
+            Packet::CreatePolicy(packet) => packet.write_packet(),
+            Packet::DeletePolicy(packet) => packet.write_packet(),
+            Packet::PolicyResult(packet) => packet.write_packet(),
+            Packet::SiteVisit(packet) => packet.write_packet(),
+        };
+
+        dst.extend_from_slice(&raw_packet);
+
+        Ok(())
     }
 }

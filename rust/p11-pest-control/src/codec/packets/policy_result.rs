@@ -2,11 +2,21 @@ use std::ops::ControlFlow;
 
 use bytes::BytesMut;
 
-use crate::codec::{packets, Error, Parser, RawPacketDecoder, Validator};
+use crate::codec::{packets, Error, Parser, RawPacketDecoder, Validator, Writer};
 
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub policy: u32,
+}
+
+impl Packet {
+    pub(crate) fn write_packet(&self) -> Vec<u8> {
+        let mut writer = Writer::new(0x57);
+
+        writer.write_u32(self.policy);
+
+        writer.finalize()
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -45,34 +55,53 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
         return b;
     }
 
-    let raw_packet = validator.raw_packet()?;
+    let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::PolicyResult(raw_packet)))
+    Ok(Some(packets::Packet::PolicyResult(raw_packet.decode())))
 }
 
 #[cfg(test)]
 mod tests {
-    use futures::TryStreamExt;
+    use futures::{SinkExt, TryStreamExt};
 
-    use tokio_util::codec::FramedRead;
+    use tokio_util::codec::{FramedRead, FramedWrite};
 
-    use crate::codec::packets::PacketDecoder;
+    use crate::codec::packets::PacketCodec;
     use crate::tests::init_tracing_subscriber;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_packet() {
+    async fn test_read() {
         init_tracing_subscriber();
 
         let data = [0x57, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x7b, 0x24].as_slice();
-        let mut reader = FramedRead::new(data, PacketDecoder::new());
+        let mut reader = FramedRead::new(data, PacketCodec::new());
 
         let packets::Packet::PolicyResult(raw_packet) = reader.try_next().await.unwrap().unwrap()
         else {
             panic!("invalid packet");
         };
 
-        assert_eq!(Packet { policy: 123 }, raw_packet.decode());
+        assert_eq!(Packet { policy: 123 }, raw_packet);
+    }
+
+    #[tokio::test]
+    async fn test_write() {
+        init_tracing_subscriber();
+
+        let mut buffer = vec![];
+        {
+            let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
+
+            writer
+                .send(packets::Packet::PolicyResult(Packet { policy: 123 }))
+                .await
+                .unwrap();
+        }
+
+        let data = [0x57, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x7b, 0x24].as_slice();
+
+        assert_eq!(data, buffer);
     }
 }

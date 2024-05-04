@@ -31,7 +31,10 @@ impl<'a> Parser<'a> {
     }
 
     fn read_u8(&mut self) -> u8 {
-        let (r, rem) = unsafe { self.0.split_first().unwrap_unchecked() };
+        let (r, rem) = self
+            .0
+            .split_first()
+            .expect("invalid state, is data validated?");
         self.0 = rem;
         *r
     }
@@ -45,9 +48,8 @@ impl<'a> Parser<'a> {
     fn read_str(&mut self) -> &'a str {
         let len = u32::from_be_bytes([self.0[0], self.0[1], self.0[2], self.0[3]]) as usize;
 
-        let r = unsafe {
-            std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.0[4..].as_ptr(), len))
-        };
+        let r = std::str::from_utf8(&self.0[4..4 + len]).expect("invalid utf8");
+
         self.0 = &self.0[len + 4..];
 
         r
@@ -135,12 +137,8 @@ impl<'a> Validator<'a> {
         }
 
         if self.data.len() > self.cursor + len {
-            let r = unsafe {
-                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    self.data.as_ptr().add(self.cursor),
-                    len,
-                ))
-            };
+            let r = std::str::from_utf8(&self.data[self.cursor..self.cursor + len])
+                .expect("invalid utf8");
             self.cursor += len;
             ControlFlow::Continue(r)
         } else {
@@ -175,10 +173,13 @@ impl<'a> Validator<'a> {
 
     fn validate_checksum<P>(&mut self) -> ControlFlow<Result<Option<P>, Error>, u8> {
         let checksum = self.validate_u8()?;
+        let Some(length) = self.length else {
+            return ControlFlow::Break(Err(Error::InvalidPacket));
+        };
         if self
             .data
             .iter()
-            .take(unsafe { self.length.unwrap_unchecked() })
+            .take(length)
             .fold(0_u8, |a, b| a.wrapping_add(*b))
             != 0
         {
@@ -188,15 +189,54 @@ impl<'a> Validator<'a> {
     }
 
     fn raw_packet<D: RawPacketDecoder>(&mut self) -> Result<RawPacket<D>, Error> {
-        if unsafe { self.length.unwrap_unchecked() } != self.cursor {
+        let Some(length) = self.length else {
+            return Err(Error::InvalidPacket);
+        };
+
+        if length != self.cursor {
             return Err(Error::InvalidPacket);
         }
 
-        let bytes = self
-            .data
-            .split_to(unsafe { self.length.unwrap_unchecked() })
-            .freeze();
+        let bytes = self.data.split_to(length).freeze();
 
         Ok(RawPacket::new(bytes))
+    }
+}
+
+struct Writer(Vec<u8>);
+
+impl Writer {
+    fn new(t: u8) -> Self {
+        Self(vec![t, 0, 0, 0, 0])
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn write_str(&mut self, value: &str) {
+        self.write_u32(value.len() as u32);
+        self.0.extend_from_slice(value.as_bytes());
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.0.extend_from_slice(&value.to_be_bytes());
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.0.push(value);
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn finalize(mut self) -> Vec<u8> {
+        let len = self.0.len() + 1;
+        if let Some(value) = self.0.get_mut(1..5).as_mut() {
+            for (a, b) in value.iter_mut().zip((len as u32).to_be_bytes()) {
+                *a = b;
+            }
+        }
+
+        let checksum = 0_u8.wrapping_sub(self.0.iter().fold(0, |acc, a| acc.wrapping_add(*a)));
+
+        self.0.push(checksum);
+
+        self.0
     }
 }
