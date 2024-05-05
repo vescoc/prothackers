@@ -17,6 +17,11 @@ impl Packet {
 
         writer.finalize()
     }
+
+    #[must_use]
+    pub fn new(site: u32) -> Self {
+        Self { site }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -32,7 +37,7 @@ impl RawPacketDecoder for PacketDecoder {
         parser.read_u32();
         let site = parser.read_u32();
 
-        Packet { site }
+        Packet::new(site)
     }
 }
 
@@ -57,7 +62,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::DialAuthority(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -83,7 +88,7 @@ mod tests {
             panic!("invalid packet");
         };
 
-        assert_eq!(Packet { site: 12345 }, raw_packet);
+        assert_eq!(Packet::new(12345), raw_packet);
     }
 
     #[tokio::test]
@@ -94,10 +99,7 @@ mod tests {
         {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
-            writer
-                .send(packets::Packet::DialAuthority(Packet { site: 12345 }))
-                .await
-                .unwrap();
+            writer.send(Packet::new(12345).into()).await.unwrap();
         }
 
         let data = [0x53, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x30, 0x39, 0x3a].as_slice();

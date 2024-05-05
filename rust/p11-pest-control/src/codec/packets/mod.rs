@@ -29,6 +29,60 @@ pub enum Packet {
     SiteVisit(site_visit::Packet),
 }
 
+impl From<hello::Packet> for Packet {
+    fn from(packet: hello::Packet) -> Self {
+        Packet::Hello(packet)
+    }
+}
+
+impl From<error::Packet> for Packet {
+    fn from(packet: error::Packet) -> Self {
+        Packet::Error(packet)
+    }
+}
+
+impl From<ok::Packet> for Packet {
+    fn from(packet: ok::Packet) -> Self {
+        Packet::Ok(packet)
+    }
+}
+
+impl From<dial_authority::Packet> for Packet {
+    fn from(packet: dial_authority::Packet) -> Self {
+        Packet::DialAuthority(packet)
+    }
+}
+
+impl From<target_populations::Packet> for Packet {
+    fn from(packet: target_populations::Packet) -> Self {
+        Packet::TargetPopulations(packet)
+    }
+}
+
+impl From<create_policy::Packet> for Packet {
+    fn from(packet: create_policy::Packet) -> Self {
+        Packet::CreatePolicy(packet)
+    }
+}
+
+impl From<delete_policy::Packet> for Packet {
+    fn from(packet: delete_policy::Packet) -> Self {
+        Packet::DeletePolicy(packet)
+    }
+}
+
+impl From<policy_result::Packet> for Packet {
+    fn from(packet: policy_result::Packet) -> Self {
+        Packet::PolicyResult(packet)
+    }
+}
+
+impl From<site_visit::Packet> for Packet {
+    fn from(packet: site_visit::Packet) -> Self {
+        Packet::SiteVisit(packet)
+    }
+}
+
 pub struct PacketCodec;
 
 impl PacketCodec {

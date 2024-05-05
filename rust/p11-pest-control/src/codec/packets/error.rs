@@ -17,6 +17,13 @@ impl Packet {
 
         writer.finalize()
     }
+
+    #[must_use]
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -30,9 +37,9 @@ impl RawPacketDecoder for PacketDecoder {
 
         parser.read_u8();
         parser.read_u32();
-        let message = parser.read_str().to_string();
+        let message = parser.read_str();
 
-        Packet { message }
+        Packet::new(message)
     }
 }
 
@@ -57,7 +64,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::Error(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -85,12 +92,7 @@ mod tests {
             panic!("invalid packet");
         };
 
-        assert_eq!(
-            Packet {
-                message: "bad".to_string()
-            },
-            raw_packet
-        );
+        assert_eq!(Packet::new("bad"), raw_packet);
     }
 
     #[tokio::test]
@@ -101,12 +103,7 @@ mod tests {
         {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
-            writer
-                .send(packets::Packet::Error(Packet {
-                    message: "bad".to_string(),
-                }))
-                .await
-                .unwrap();
+            writer.send(Packet::new("bad").into()).await.unwrap();
         }
 
         let data = [

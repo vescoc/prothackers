@@ -34,6 +34,14 @@ impl Packet {
 
         writer.finalize()
     }
+
+    #[must_use]
+    pub fn new(species: impl Into<String>, action: PolicyAction) -> Self {
+        Self {
+            species: species.into(),
+            action,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -54,7 +62,7 @@ impl RawPacketDecoder for PacketDecoder {
             PolicyAction::Conserve
         };
 
-        Packet { species, action }
+        Packet::new(species, action)
     }
 }
 
@@ -87,7 +95,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::CreatePolicy(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -116,13 +124,7 @@ mod tests {
             panic!("invalid packet");
         };
 
-        assert_eq!(
-            Packet {
-                species: "dog".to_string(),
-                action: PolicyAction::Conserve
-            },
-            raw_packet
-        );
+        assert_eq!(Packet::new("dog", PolicyAction::Conserve), raw_packet);
     }
 
     #[tokio::test]
@@ -134,10 +136,7 @@ mod tests {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
             writer
-                .send(packets::Packet::CreatePolicy(Packet {
-                    species: "dog".to_string(),
-                    action: PolicyAction::Conserve,
-                }))
+                .send(Packet::new("dog", PolicyAction::Conserve).into())
                 .await
                 .unwrap();
         }

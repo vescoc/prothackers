@@ -4,6 +4,9 @@ use bytes::BytesMut;
 
 use crate::codec::{packets, Error, Parser, RawPacketDecoder, Validator, Writer};
 
+pub const PESTCONTROL_PROTOCOL: &str = "pestcontrol";
+pub const PESTCONTROL_VERSION: u32 = 1;
+
 #[derive(Debug, PartialEq)]
 pub struct Packet {
     pub protocol: String,
@@ -18,6 +21,20 @@ impl Packet {
         writer.write_u32(self.version);
 
         writer.finalize()
+    }
+
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            protocol: PESTCONTROL_PROTOCOL.to_string(),
+            version: PESTCONTROL_VERSION,
+        }
+    }
+}
+
+impl Default for Packet {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -64,7 +81,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::Hello(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -93,13 +110,7 @@ mod tests {
             panic!("invalid packet");
         };
 
-        assert_eq!(
-            Packet {
-                protocol: "pestcontrol".to_string(),
-                version: 1
-            },
-            raw_packet
-        );
+        assert_eq!(Packet::new(), raw_packet);
     }
 
     #[tokio::test]
@@ -110,13 +121,7 @@ mod tests {
         {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
-            writer
-                .send(packets::Packet::Hello(Packet {
-                    protocol: "pestcontrol".to_string(),
-                    version: 1,
-                }))
-                .await
-                .unwrap();
+            writer.send(Packet::new().into()).await.unwrap();
         }
 
         let data = [

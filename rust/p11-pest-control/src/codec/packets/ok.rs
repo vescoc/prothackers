@@ -49,7 +49,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::Ok(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -85,7 +85,7 @@ mod tests {
         {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
-            writer.send(packets::Packet::Ok(Packet)).await.unwrap();
+            writer.send(Packet.into()).await.unwrap();
         }
 
         let data = [0x52, 0x00, 0x00, 0x00, 0x06, 0xa8].as_slice();

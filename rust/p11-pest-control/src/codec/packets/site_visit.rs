@@ -24,12 +24,26 @@ impl Packet {
 
         writer.finalize()
     }
+
+    #[must_use]
+    pub fn new(site: u32, populations: Vec<Population>) -> Self {
+        Self { site, populations }
+    }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Population {
     pub species: String,
     pub count: u32,
+}
+
+impl Population {
+    pub fn new(species: impl Into<String>, count: u32) -> Self {
+        Self {
+            species: species.into(),
+            count,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -48,13 +62,13 @@ impl RawPacketDecoder for PacketDecoder {
         let len = parser.read_u32() as usize;
         let mut populations = Vec::with_capacity(len);
         for _ in 0..len {
-            let species = parser.read_str().to_string();
+            let species = parser.read_str();
             let count = parser.read_u32();
 
-            populations.push(Population { species, count });
+            populations.push(Population::new(species, count));
         }
 
-        Packet { site, populations }
+        Packet::new(site, populations)
     }
 }
 
@@ -98,7 +112,7 @@ pub(crate) fn read_packet(src: &mut BytesMut) -> Result<Option<packets::Packet>,
 
     let raw_packet = validator.raw_packet::<PacketDecoder>()?;
 
-    Ok(Some(packets::Packet::SiteVisit(raw_packet.decode())))
+    Ok(Some(raw_packet.decode().into()))
 }
 
 #[cfg(test)]
@@ -156,19 +170,22 @@ mod tests {
             let mut writer = FramedWrite::new(&mut buffer, PacketCodec::new());
 
             writer
-                .send(packets::Packet::SiteVisit(Packet {
-                    site: 12345,
-                    populations: vec![
-                        Population {
-                            species: "dog".to_string(),
-                            count: 1,
-                        },
-                        Population {
-                            species: "rat".to_string(),
-                            count: 5,
-                        },
-                    ],
-                }))
+                .send(
+                    Packet {
+                        site: 12345,
+                        populations: vec![
+                            Population {
+                                species: "dog".to_string(),
+                                count: 1,
+                            },
+                            Population {
+                                species: "rat".to_string(),
+                                count: 5,
+                            },
+                        ],
+                    }
+                    .into(),
+                )
                 .await
                 .unwrap();
         }

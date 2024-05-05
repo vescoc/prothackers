@@ -27,6 +27,7 @@ anyhow = { workspace = true, optional = true }
 [dev-dependencies]
 tracing-subscriber.workspace = true
 parking_lot.workspace = true
+anyhow.workspace = true
 
 [lints]
 workspace = true
