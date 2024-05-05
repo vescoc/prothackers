@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use futures::{Sink, SinkExt, Stream, StreamExt};
 
 use tokio::sync::mpsc;
@@ -72,29 +74,51 @@ where
         }
     }
 
+    #[instrument(skip_all)]
     async fn handle_hello(&mut self) -> Result<(), Error> {
+        self.downstream
+            .send(packets::hello::Packet::new().into())
+            .await?;
+
         match self.upstream.next().await {
             Some(Ok(packets::Packet::Hello(packets::hello::Packet { protocol, version })))
                 if protocol == packets::hello::PESTCONTROL_PROTOCOL
                     && version == packets::hello::PESTCONTROL_VERSION =>
             {
-                Ok(self
-                    .downstream
-                    .send(packets::hello::Packet::new().into())
-                    .await?)
+                Ok(())
             }
             Some(Err(err)) => Err(Error::Receiving(err.into())),
+            Some(Ok(packet)) => {
+                warn!("invalid packet: {packet:?}");
+                return Err(Error::InvalidPacket("got invalid packet"));
+            }
             _ => Err(Error::InvalidPacket("waiting hello msg")),
         }
     }
 
+    #[instrument(skip_all)]
     async fn handle_visits(&mut self) -> Result<(), Error> {
         loop {
             match self.upstream.next().await {
                 Some(Ok(packets::Packet::SiteVisit(packet))) => {
+                    debug!("got packet: {packet:?}");
+                    let mut map = HashMap::with_capacity(packet.populations.len());
+                    for packets::site_visit::Population { species, count } in &packet.populations {
+                        if let Some(c) = map.get(species) {
+                            if *c != count {
+                                warn!("got conflict {species} {c} != {count}");
+                                return Err(Error::InvalidPacket("conflicts"));
+                            }
+                        }
+                        map.insert(species.clone(), count);
+                    }
+
                     self.controller.send(packet).await?;
                 }
-                Some(Ok(_)) => return Err(Error::InvalidPacket("got invalid packet")),
+                Some(Ok(packet)) => {
+                    warn!("invalid packet: {packet:?}");
+                    return Err(Error::InvalidPacket("got invalid packet"));
+                }
                 Some(Err(err)) => return Err(Error::Receiving(err.into())),
                 None => break Ok(()),
             }

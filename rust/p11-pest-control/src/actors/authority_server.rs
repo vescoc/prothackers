@@ -169,7 +169,7 @@ impl<P: Provider + Send + 'static> AuthorityServer<P> {
                     Some(Ok(packets::Packet::TargetPopulations(
                         packets::target_populations::Packet { site, populations },
                     ))) if site == self.site => {
-                        debug!("got target populations");
+                        debug!("got target populations: {populations:?}");
                         return Ok((upstream, downstream, populations));
                     }
 
@@ -187,7 +187,7 @@ impl<P: Provider + Send + 'static> AuthorityServer<P> {
         Err(Error::CannotConnect)
     }
 
-    #[instrument(skip(upstream, downstream))]
+    #[instrument(skip(upstream, downstream, target_populations, populations))]
     async fn adjust_policies(
         &mut self,
         upstream: &mut P::Sink,
@@ -221,6 +221,31 @@ impl<P: Provider + Send + 'static> AuthorityServer<P> {
                         downstream,
                         species,
                         packets::create_policy::PolicyAction::Cull,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        for packets::target_populations::Population {
+            species, min, max, ..
+        } in target_populations
+        {
+            if !populations.iter().any(
+                |packets::site_visit::Population {
+                     species: target_species,
+                     ..
+                 }| target_species == species,
+            ) {
+                debug!("NOT found species: {species} {min} [ 0 ] {max}");
+                if (*min..=*max).contains(&0) {
+                    self.delete_policy(upstream, downstream, species).await?;
+                } else if *min > 0 {
+                    self.add_policy(
+                        upstream,
+                        downstream,
+                        species,
+                        packets::create_policy::PolicyAction::Conserve,
                     )
                     .await?;
                 }
@@ -376,13 +401,6 @@ mod tests {
             .send(vec![packets::site_visit::Population {
                 species: "long-tailed rat".to_string(),
                 count: 20,
-            }])
-            .unwrap();
-
-        controller_tx
-            .send(vec![packets::site_visit::Population {
-                species: "dog".to_string(),
-                count: 1,
             }])
             .unwrap();
 
