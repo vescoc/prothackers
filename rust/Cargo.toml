@@ -11,6 +11,7 @@ members = [
     "p08-insecure-sockets-layer",
     "p09-job-centre",
     "p10-voracious-code-storage",
+    "p11-pest-control",
 ]
 resolver = "2"
 

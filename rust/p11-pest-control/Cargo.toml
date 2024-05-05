@@ -1,0 +1,33 @@
+[package]
+name = "p11-pest-control"
+version = "0.1.0"
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[features]
+bin = ["dep:clap", "dep:tracing-subscriber", "dep:anyhow"]
+
+[[bin]]
+name = "p11-pest-control"
+required-features = ["bin"]
+
+[dependencies]
+futures.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
+
+clap = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
+parking_lot.workspace = true
+anyhow.workspace = true
+
+[lints]
+workspace = true
