@@ -1,0 +1,22 @@
+[package]
+name = "p00-smoke-test"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+
+[package.metadata.component]
+package = "component:p00-smoke-test"
+
+[package.metadata.component.dependencies]
+
+[dependencies]
+wit-bindgen-rt.workspace = true
+wasi.workspace = true
+wasi-async-runtime.workspace = true
+wasi-async.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+futures-concurrency.workspace = true

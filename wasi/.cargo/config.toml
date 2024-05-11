@@ -1,0 +1,2 @@
+[target.wasm32-wasi]
+runner = "wasmtime run -S http=y -S cli=y -S preview2=y -S inherit-env=y -S allow-ip-name-lookup=y -S inherit-network=y"
