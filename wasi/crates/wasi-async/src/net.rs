@@ -236,4 +236,22 @@ impl<'a> WriteHalf<'a> {
     pub async fn flush(&mut self) -> Result<(), StreamError> {
         self.output_stream.flush()
     }
+
+    pub async fn splice(&mut self, read: &mut ReadHalf<'_>, len: u64) -> Result<u64, StreamError> {
+        if len == 0 {
+            return Ok(0);
+        }
+        
+        while self.output_stream.check_write()?.min(len) == 0 {
+            self.reactor.wait_for(self.output_stream.subscribe()).await;
+        }
+
+        loop {
+            let len = self.output_stream.splice(read.input_stream, len)?;
+            if len > 0 {
+                return Ok(len);
+            }
+            self.reactor.wait_for(read.input_stream.subscribe()).await;
+        }
+    }
 }

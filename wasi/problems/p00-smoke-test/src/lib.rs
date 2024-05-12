@@ -25,14 +25,8 @@ pub async fn run(address: IpSocketAddress, mut stream: TcpStream) -> Result<(), 
     info!("run: {address:?}");
 
     let (mut read, mut write) = stream.split();
-    loop {
-        let data = read.read(1024).await?;
-        if data.is_empty() {
-            break;
-        }
-
-        write.write_all(&data).await?;
-        write.flush().await?;
+    while write.splice(&mut read, 1024).await? > 0 {
+        write.flush().await?
     }
 
     Ok(stream.close().await?)
