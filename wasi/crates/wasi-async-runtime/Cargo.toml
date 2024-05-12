@@ -1,0 +1,17 @@
+[package]
+name = "wasi-async-runtime"
+version = "0.1.0"
+edition.workspace = true
+authors.workspace = true
+
+[package.metadata.component]
+package = "component:wasi-async-runtime"
+
+[package.metadata.component.dependencies]
+
+[dependencies]
+wit-bindgen-rt.workspace = true
+futures.workspace = true
+wasi.workspace = true
+slab.workspace = true
+hashbrown.workspace = true
