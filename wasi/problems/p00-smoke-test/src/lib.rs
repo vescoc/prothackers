@@ -7,6 +7,7 @@ use thiserror::Error;
 use tracing::{info, instrument};
 
 use wasi_async::net::TcpStream;
+use wasi_async::io::AsyncWrite;
 
 #[allow(warnings)]
 mod bindings;

@@ -12,6 +12,8 @@ use wasi::io::streams::{InputStream, OutputStream, StreamError};
 
 use wasi_async_runtime::Reactor;
 
+use crate::io::{AsyncRead, AsyncWrite};
+
 pub struct SocketAddress<'a>(&'a str, u16);
 
 pub trait ToSocketAddress {
@@ -185,8 +187,8 @@ pub struct ReadHalf<'a> {
     input_stream: &'a mut InputStream,
 }
 
-impl<'a> ReadHalf<'a> {
-    pub async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
+impl<'a> AsyncRead for ReadHalf<'a> {
+    async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
         self.reactor.wait_for(self.input_stream.subscribe()).await;
 
         let data = self.input_stream.read(len)?;
@@ -204,8 +206,8 @@ pub struct WriteHalf<'a> {
     output_stream: &'a mut OutputStream,
 }
 
-impl<'a> WriteHalf<'a> {
-    pub async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
+impl<'a> AsyncWrite for WriteHalf<'a> {
+    async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
         self.reactor.wait_for(self.output_stream.subscribe()).await;
 
         let len = self.output_stream.check_write()?;
@@ -218,25 +220,12 @@ impl<'a> WriteHalf<'a> {
         Ok(len as u64)
     }
 
-    pub async fn write_all(&mut self, mut data: &[u8]) -> Result<(), StreamError> {
-        while !data.is_empty() {
-            let len = self.write(data).await?;
-            assert!(len > 0, "write_all len zero");
-
-            if len as usize == data.len() {
-                break;
-            }
-
-            data = &data[len as usize..];
-        }
-
-        Ok(())
-    }
-
-    pub async fn flush(&mut self) -> Result<(), StreamError> {
+    async fn flush(&mut self) -> Result<(), StreamError> {
         self.output_stream.flush()
     }
+}
 
+impl<'a> WriteHalf<'a> {
     pub async fn splice(&mut self, read: &mut ReadHalf<'_>, len: u64) -> Result<u64, StreamError> {
         if len == 0 {
             return Ok(0);
