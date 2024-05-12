@@ -6,8 +6,8 @@ use wasi::sockets::network::{ErrorCode, IpSocketAddress};
 use thiserror::Error;
 use tracing::{info, instrument};
 
-use wasi_async::net::TcpStream;
 use wasi_async::io::AsyncWrite;
+use wasi_async::net::TcpStream;
 
 #[allow(warnings)]
 mod bindings;
@@ -31,8 +31,9 @@ pub async fn run(address: IpSocketAddress, mut stream: TcpStream) -> Result<(), 
             write.flush().await?
         }
         Ok(())
-    }.await;
-    
+    }
+    .await;
+
     stream.close().await.ok();
 
     match r {

@@ -5,8 +5,8 @@ use wasi_async_runtime::{block_on, Reactor};
 
 use tracing::info;
 
-use wasi_async::net::TcpListener;
 use wasi_async::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use wasi_async::net::TcpListener;
 
 #[test]
 fn test_session() {

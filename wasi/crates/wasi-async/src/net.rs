@@ -86,8 +86,8 @@ impl TcpListener {
             TcpStream {
                 reactor: self.reactor.clone(),
                 socket: ManuallyDrop::new(socket),
-                input_stream,
-                output_stream,
+                input_stream: ManuallyDrop::new(input_stream),
+                output_stream: ManuallyDrop::new(output_stream),
             },
             address,
         ))
@@ -113,8 +113,8 @@ pub struct TcpStream {
     reactor: Reactor,
     // There is a panic in drop, I must manually drop the socket
     socket: ManuallyDrop<TcpSocket>,
-    input_stream: InputStream,
-    output_stream: OutputStream,
+    input_stream: ManuallyDrop<InputStream>,
+    output_stream: ManuallyDrop<OutputStream>,
 }
 
 impl TcpStream {
@@ -154,8 +154,8 @@ impl TcpStream {
         Ok(Self {
             reactor,
             socket: ManuallyDrop::new(socket),
-            input_stream,
-            output_stream,
+            input_stream: ManuallyDrop::new(input_stream),
+            output_stream: ManuallyDrop::new(output_stream),
         })
     }
 
@@ -171,7 +171,7 @@ impl TcpStream {
         (read, write)
     }
 
-    pub async fn close(&mut self) -> Result<(), ErrorCode> {
+    pub async fn close(self) -> Result<(), ErrorCode> {
         self.socket.shutdown(ShutdownType::Both)
     }
 }
@@ -189,14 +189,12 @@ pub struct ReadHalf<'a> {
 
 impl<'a> AsyncRead for ReadHalf<'a> {
     async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
-        self.reactor.wait_for(self.input_stream.subscribe()).await;
-
-        let data = self.input_stream.read(len)?;
-        if data.is_empty() {
+        loop {
+            let data = self.input_stream.read(len)?;
+            if !data.is_empty() {
+                return Ok(data);
+            }
             self.reactor.wait_for(self.input_stream.subscribe()).await;
-            self.input_stream.read(len)
-        } else {
-            Ok(data)
         }
     }
 }
@@ -230,7 +228,7 @@ impl<'a> WriteHalf<'a> {
         if len == 0 {
             return Ok(0);
         }
-        
+
         while self.output_stream.check_write()?.min(len) == 0 {
             self.reactor.wait_for(self.output_stream.subscribe()).await;
         }
