@@ -25,9 +25,17 @@ pub async fn run(address: IpSocketAddress, mut stream: TcpStream) -> Result<(), 
     info!("run: {address:?}");
 
     let (mut read, mut write) = stream.split();
-    while write.splice(&mut read, 1024).await? > 0 {
-        write.flush().await?
-    }
+    let r = async move {
+        while write.splice(&mut read, 1024).await? > 0 {
+            write.flush().await?
+        }
+        Ok(())
+    }.await;
+    
+    stream.close().await.ok();
 
-    Ok(stream.close().await?)
+    match r {
+        Err(Error::Stream(StreamError::Closed)) | Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
