@@ -3,7 +3,7 @@ use std::mem::ManuallyDrop;
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::ip_name_lookup::resolve_addresses;
 use wasi::sockets::network::{
-    ErrorCode, IpAddress, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress,
+    ErrorCode, IpAddress, IpAddressFamily, IpSocketAddress, Ipv4SocketAddress, Ipv6SocketAddress,
 };
 use wasi::sockets::tcp::{ShutdownType, TcpSocket};
 use wasi::sockets::tcp_create_socket::create_tcp_socket;
@@ -90,6 +90,21 @@ impl TcpListener {
             address,
         ))
     }
+
+    pub fn local_addr(&self) -> Result<LocalSocketAddress, ErrorCode> {
+        match self.socket.local_address()? {
+            IpSocketAddress::Ipv4(Ipv4SocketAddress { port, .. })
+            | IpSocketAddress::Ipv6(Ipv6SocketAddress { port, .. }) => Ok(LocalSocketAddress(port)),
+        }
+    }
+}
+
+pub struct LocalSocketAddress(u16);
+
+impl LocalSocketAddress {
+    pub fn port(&self) -> u16 {
+        self.0
+    }
 }
 
 pub struct TcpStream {
@@ -101,6 +116,47 @@ pub struct TcpStream {
 }
 
 impl TcpStream {
+    pub async fn connect(
+        reactor: Reactor,
+        remote_address: impl ToSocketAddress,
+    ) -> Result<Self, ErrorCode> {
+        let SocketAddress(address, port) = remote_address.to_socket_address()?;
+
+        let network = instance_network();
+
+        let addresses = resolve_addresses(&network, address)?;
+
+        reactor.wait_for(addresses.subscribe()).await;
+
+        let address = addresses
+            .resolve_next_address()?
+            .ok_or(ErrorCode::InvalidArgument)?;
+
+        let (family, socket_address) = match address {
+            IpAddress::Ipv4(address) => (
+                IpAddressFamily::Ipv4,
+                IpSocketAddress::Ipv4(Ipv4SocketAddress { address, port }),
+            ),
+
+            IpAddress::Ipv6(address) => panic!("unsupported ipv6 address: {address:?}"),
+        };
+
+        let socket = create_tcp_socket(family)?;
+
+        socket.start_connect(&network, socket_address)?;
+
+        reactor.wait_for(socket.subscribe()).await;
+
+        let (input_stream, output_stream) = socket.finish_connect()?;
+
+        Ok(Self {
+            reactor,
+            socket: ManuallyDrop::new(socket),
+            input_stream,
+            output_stream,
+        })
+    }
+
     pub fn split(&mut self) -> (ReadHalf, WriteHalf) {
         let read = ReadHalf {
             reactor: self.reactor.clone(),
