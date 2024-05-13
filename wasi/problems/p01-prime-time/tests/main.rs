@@ -130,6 +130,7 @@ fn test_invalid_json() {
 }
 
 #[test]
+
 fn test_is_prime() {
     wasi_async_runtime::block_on(|reactor| async move {
         let (address, port) = spawn_app(reactor.clone()).await;
