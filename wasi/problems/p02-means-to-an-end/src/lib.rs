@@ -5,18 +5,19 @@ use std::collections::BTreeMap;
 use std::mem;
 use std::num::TryFromIntError;
 
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 
 use wasi::io::streams::StreamError;
 use wasi::sockets::network::{self, IpSocketAddress};
 
-use wasi_async::codec::{ChunksDecoder, FramedRead};
-use wasi_async::io::{AsyncWrite, AsyncWriteExt};
+use wasi_async::codec::{ChunksDecoder, Encoder, FramedRead, FramedWrite};
 use wasi_async::net::TcpStream;
 
 use thiserror::Error;
 
 use tracing::{debug, info, instrument, warn};
+
+use bytes::BytesMut;
 
 #[allow(warnings)]
 mod bindings;
@@ -52,9 +53,10 @@ pub async fn run(address: IpSocketAddress, mut stream: TcpStream) -> Result<(), 
 
     let mut items = BTreeMap::new();
 
-    let (read, mut write) = stream.split();
+    let (read, write) = stream.split();
     let r = async move {
         let mut read = FramedRead::new(read, ChunksDecoder::<9>::new()).map(parse);
+        let mut write = FramedWrite::new(write, I32Encoder::new());
 
         while let Some(value) = read.next().await {
             match value? {
@@ -72,16 +74,12 @@ pub async fn run(address: IpSocketAddress, mut stream: TcpStream) -> Result<(), 
                     }
                     let mean = if count > 0 { sum / count } else { 0 };
                     debug!("Q {mintime} {maxtime}: {mean}");
-                    write
-                        .write_all(i32::to_be_bytes(i32::try_from(mean)?).as_slice())
-                        .await?;
-                    write.flush().await?;
+                    write.send(i32::try_from(mean)?).await?;
                 }
 
                 Message::Query { mintime, maxtime } => {
                     debug!("Q {mintime} {maxtime} invalid range");
-                    write.write_all([0, 0, 0, 0].as_slice()).await?;
-                    write.flush().await?;
+                    write.send(0).await?;
                 }
             }
         }
@@ -112,5 +110,30 @@ fn parse(chunk: Result<[u8; 9], StreamError>) -> Result<Message, Error> {
             warn!("invalid request");
             Err(Error::MessageInvalid)
         }
+    }
+}
+
+pub struct I32Encoder;
+
+impl I32Encoder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for I32Encoder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Encoder<i32> for I32Encoder {
+    type Error = StreamError;
+
+    fn encode(&mut self, item: i32, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        dst.extend_from_slice(item.to_be_bytes().as_slice());
+
+        Ok(())
     }
 }

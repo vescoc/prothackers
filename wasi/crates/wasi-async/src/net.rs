@@ -206,10 +206,13 @@ pub struct WriteHalf<'a> {
 
 impl<'a> AsyncWrite for WriteHalf<'a> {
     async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
-        self.reactor.wait_for(self.output_stream.subscribe()).await;
-
-        let len = self.output_stream.check_write()?;
-        assert!(len > 0, "write len zero");
+        let len = loop {
+            let len = self.output_stream.check_write()?;
+            if len > 0 {
+                break len;
+            }
+            self.reactor.wait_for(self.output_stream.subscribe()).await;
+        };
 
         let len = data.len().min(len as usize);
 

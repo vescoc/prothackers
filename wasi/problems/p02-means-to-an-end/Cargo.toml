@@ -16,7 +16,7 @@ clap.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-
+bytes.workspace = true
 
 [package.metadata.component]
 package = "component:p02-means-to-an-end"
