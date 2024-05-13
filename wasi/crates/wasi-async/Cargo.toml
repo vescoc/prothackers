@@ -13,3 +13,6 @@ package = "component:wasi-async"
 wit-bindgen-rt.workspace = true
 wasi.workspace = true
 wasi-async-runtime.workspace = true
+bytes.workspace = true
+futures.workspace = true
+tracing.workspace = true
