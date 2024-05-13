@@ -164,3 +164,32 @@ impl Decoder for LinesDecoder {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct ChunksDecoder<const SIZE: usize>;
+
+impl<const SIZE: usize> ChunksDecoder<SIZE> {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl<const SIZE: usize> Default for ChunksDecoder<SIZE> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const SIZE: usize> Decoder for ChunksDecoder<SIZE> {
+    type Item = [u8; SIZE];
+    type Error = StreamError;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        if src.len() < SIZE {
+            Ok(None)
+        } else {
+            let chunk = src.split_to(SIZE);
+            Ok(Some(chunk[..].try_into().unwrap()))
+        }
+    }
+}

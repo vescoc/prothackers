@@ -2,6 +2,7 @@
 members = [
     "problems/p00-smoke-test",
     "problems/p01-prime-time",
+    "problems/p02-means-to-an-end",
 ]
 resolver = "2"
 
