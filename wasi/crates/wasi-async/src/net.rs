@@ -1,4 +1,10 @@
+use std::future::Future;
 use std::mem::ManuallyDrop;
+use std::pin::pin;
+use std::rc::Rc;
+use std::task::Poll;
+
+use futures::{stream, Stream};
 
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::ip_name_lookup::resolve_addresses;
@@ -75,6 +81,39 @@ impl TcpListener {
         Ok(Self { reactor, socket })
     }
 
+    pub fn into_stream(
+        self,
+    ) -> impl Stream<Item = Result<(TcpStream, IpSocketAddress), ErrorCode>> {
+        stream::poll_fn(move |cx| {
+            let reactor = self.reactor.clone();
+            let subscription = self.socket.subscribe();
+            let wait_for = pin!(reactor.wait_for(subscription));
+            if wait_for.poll(cx).is_pending() {
+                return Poll::Pending;
+            }
+
+            match self.socket.accept() {
+                Ok((socket, input_stream, output_stream)) => {
+                    let address = match socket.remote_address() {
+                        Ok(address) => address,
+                        Err(err) => return Poll::Ready(Some(Err(err))),
+                    };
+
+                    Poll::Ready(Some(Ok((
+                        TcpStream(Some(TcpStreamInner {
+                            reactor: self.reactor.clone(),
+                            socket: ManuallyDrop::new(socket),
+                            input_stream: ManuallyDrop::new(input_stream),
+                            output_stream: ManuallyDrop::new(output_stream),
+                        })),
+                        address,
+                    ))))
+                }
+                Err(err) => Poll::Ready(Some(Err(err))),
+            }
+        })
+    }
+
     pub async fn accept(&self) -> Result<(TcpStream, IpSocketAddress), ErrorCode> {
         self.reactor.wait_for(self.socket.subscribe()).await;
 
@@ -83,12 +122,12 @@ impl TcpListener {
         let address = socket.remote_address()?;
 
         Ok((
-            TcpStream {
+            TcpStream(Some(TcpStreamInner {
                 reactor: self.reactor.clone(),
                 socket: ManuallyDrop::new(socket),
                 input_stream: ManuallyDrop::new(input_stream),
                 output_stream: ManuallyDrop::new(output_stream),
-            },
+            })),
             address,
         ))
     }
@@ -109,13 +148,15 @@ impl LocalSocketAddress {
     }
 }
 
-pub struct TcpStream {
+struct TcpStreamInner {
     reactor: Reactor,
     // There is a panic in drop, I must manually drop the socket
     socket: ManuallyDrop<TcpSocket>,
     input_stream: ManuallyDrop<InputStream>,
     output_stream: ManuallyDrop<OutputStream>,
 }
+
+pub struct TcpStream(Option<TcpStreamInner>);
 
 impl TcpStream {
     pub async fn connect(
@@ -151,34 +192,64 @@ impl TcpStream {
 
         let (input_stream, output_stream) = socket.finish_connect()?;
 
-        Ok(Self {
+        Ok(Self(Some(TcpStreamInner {
             reactor,
             socket: ManuallyDrop::new(socket),
             input_stream: ManuallyDrop::new(input_stream),
             output_stream: ManuallyDrop::new(output_stream),
-        })
+        })))
+    }
+
+    pub fn into_split(mut self) -> (OwnedReadHalf, OwnedWriteHalf) {
+        let TcpStreamInner {
+            socket,
+            reactor,
+            input_stream,
+            output_stream,
+        } = self.0.take().unwrap();
+
+        let socket = Rc::new(socket);
+        let read = OwnedReadHalf {
+            socket: socket.clone(),
+            reactor: reactor.clone(),
+            input_stream,
+        };
+        let write = OwnedWriteHalf {
+            socket,
+            reactor,
+            output_stream,
+        };
+        (read, write)
     }
 
     pub fn split(&mut self) -> (ReadHalf, WriteHalf) {
+        let this = self.0.as_mut().unwrap();
+
         let read = ReadHalf {
-            reactor: self.reactor.clone(),
-            input_stream: &mut self.input_stream,
+            reactor: this.reactor.clone(),
+            input_stream: &mut this.input_stream,
         };
         let write = WriteHalf {
-            reactor: self.reactor.clone(),
-            output_stream: &mut self.output_stream,
+            reactor: this.reactor.clone(),
+            output_stream: &mut this.output_stream,
         };
         (read, write)
     }
 
     pub async fn close(self) -> Result<(), ErrorCode> {
-        self.socket.shutdown(ShutdownType::Both)
+        if let Some(TcpStreamInner { socket, .. }) = &self.0 {
+            socket.shutdown(ShutdownType::Both)
+        } else {
+            Ok(())
+        }
     }
 }
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        self.socket.shutdown(ShutdownType::Both).ok();
+        if let Some(TcpStreamInner { socket, .. }) = &self.0 {
+            socket.shutdown(ShutdownType::Both).ok();
+        }
     }
 }
 
@@ -238,6 +309,90 @@ impl<'a> WriteHalf<'a> {
 
         loop {
             let len = self.output_stream.splice(read.input_stream, len)?;
+            if len > 0 {
+                return Ok(len);
+            }
+            self.reactor.wait_for(read.input_stream.subscribe()).await;
+        }
+    }
+}
+
+pub struct OwnedReadHalf {
+    socket: Rc<ManuallyDrop<TcpSocket>>,
+    reactor: Reactor,
+    input_stream: ManuallyDrop<InputStream>,
+}
+
+impl Drop for OwnedReadHalf {
+    fn drop(&mut self) {
+        self.socket.shutdown(ShutdownType::Receive).ok();
+    }
+}
+
+impl AsyncRead for OwnedReadHalf {
+    async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
+        loop {
+            let data = self.input_stream.read(len)?;
+            if !data.is_empty() {
+                return Ok(data);
+            }
+            self.reactor.wait_for(self.input_stream.subscribe()).await;
+        }
+    }
+}
+
+pub struct OwnedWriteHalf {
+    socket: Rc<ManuallyDrop<TcpSocket>>,
+    reactor: Reactor,
+    output_stream: ManuallyDrop<OutputStream>,
+}
+
+impl OwnedWriteHalf {
+    pub async fn close(self) -> Result<(), ErrorCode> {
+        self.socket.shutdown(ShutdownType::Send)
+    }
+}
+
+impl Drop for OwnedWriteHalf {
+    fn drop(&mut self) {
+        self.socket.shutdown(ShutdownType::Send).ok();
+    }
+}
+
+impl AsyncWrite for OwnedWriteHalf {
+    async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
+        let len = loop {
+            let len = self.output_stream.check_write()?;
+            if len > 0 {
+                break len;
+            }
+            self.reactor.wait_for(self.output_stream.subscribe()).await;
+        };
+
+        let len = data.len().min(len as usize);
+
+        self.output_stream.write(&data[0..len])?;
+
+        Ok(len as u64)
+    }
+
+    async fn flush(&mut self) -> Result<(), StreamError> {
+        self.output_stream.flush()
+    }
+}
+
+impl OwnedWriteHalf {
+    pub async fn splice(&mut self, read: &mut OwnedReadHalf, len: u64) -> Result<u64, StreamError> {
+        if len == 0 {
+            return Ok(0);
+        }
+
+        while self.output_stream.check_write()?.min(len) == 0 {
+            self.reactor.wait_for(self.output_stream.subscribe()).await;
+        }
+
+        loop {
+            let len = self.output_stream.splice(&read.input_stream, len)?;
             if len > 0 {
                 return Ok(len);
             }
