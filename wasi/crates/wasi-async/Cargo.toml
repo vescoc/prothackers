@@ -15,4 +15,5 @@ wasi.workspace = true
 wasi-async-runtime.workspace = true
 bytes.workspace = true
 futures.workspace = true
+futures-concurrency.workspace = true
 tracing.workspace = true

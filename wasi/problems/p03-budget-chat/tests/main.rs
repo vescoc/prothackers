@@ -1,10 +1,12 @@
 use std::sync::Once;
+use std::time::Duration;
 
 use futures::{sink, SinkExt, StreamExt};
 
 use wasi_async::codec::{FramedRead, LinesDecoder};
 use wasi_async::io::{AsyncRead, AsyncWriteExt};
 use wasi_async::net::{TcpListener, TcpStream};
+use wasi_async::time;
 
 use tracing::{debug, info, trace};
 
@@ -97,40 +99,46 @@ fn test_session() {
     });
 }
 
-// #[test]
-// fn test_not_joining() {
-//     wasi_async_runtime::block_on(|reactor| async move {
-//         let (address, port) = spawn_app(reactor.clone()).await;
+#[test]
+fn test_not_joining() {
+    wasi_async_runtime::block_on(|reactor| async move {
+        let (address, port) = spawn_app(reactor.clone()).await;
 
-//         let mut stream_alice = TcpStream::connect(reactor.clone(), format!("{address}:{port}"))
-//             .await
-//             .expect("cannot connect");
-//         let (read_alice, mut write_alice) = stream_alice.split();
-//         let mut read_alice = FramedRead::new(read_alice, LinesDecoder::new());
+        let mut stream_alice = TcpStream::connect(reactor.clone(), format!("{address}:{port}"))
+            .await
+            .expect("cannot connect");
+        let (read_alice, mut write_alice) = stream_alice.split();
+        let mut read_alice = FramedRead::new(read_alice, LinesDecoder::new());
 
-//         tracing::debug!("waiting welcome message");
-//         let result = read_alice.next().await.unwrap().unwrap();
-//         assert_eq!(result, b"Welcome to budgetchat! What shall I call you?");
+        tracing::debug!("waiting welcome message");
+        let result = read_alice.next().await.unwrap().unwrap();
+        assert_eq!(result, b"Welcome to budgetchat! What shall I call you?");
 
-//         write_alice.write_all(b"alice\n").await.unwrap();
+        write_alice.write_all(b"alice\n").await.unwrap();
 
-//         let result = read_alice.next().await.unwrap().unwrap();
-//         assert_eq!(result, b"* The room contains:");
+        let result = read_alice.next().await.unwrap().unwrap();
+        assert_eq!(result, b"* The room contains:");
 
-//         let mut stream_bob = TcpStream::connect(reactor.clone(), format!("{address}:{port}"))
-//             .await
-//             .unwrap();
-//         let (_, mut write_bob) = stream_bob.split();
-//         write_bob.write_all(b"bob").await.unwrap(); // no newline
-//         stream_bob.close().await.unwrap();
+        let mut stream_bob = TcpStream::connect(reactor.clone(), format!("{address}:{port}"))
+            .await
+            .unwrap();
+        let (_, mut write_bob) = stream_bob.split();
+        write_bob.write_all(b"bob").await.unwrap(); // no newline
+        stream_bob.close().await.unwrap();
 
-//         match timeout(Duration::from_millis(100), read_alice.next()).await {
-//             Err(_) => { /* ok */ }
-//             Ok(Ok(Some(message))) => panic!("invalid: {:?}", std::str::from_utf8(&message)),
-//             Ok(payload) => panic!("invalid: {payload:?}"),
-//         }
-//     });
-// }
+        match time::timeout(
+            reactor.clone(),
+            Duration::from_millis(100),
+            read_alice.next(),
+        )
+        .await
+        {
+            Err(time::Elapsed) => info!("elapsed"),
+            Ok(Some(Ok(message))) => panic!("invalid: {:?}", std::str::from_utf8(&message)),
+            Ok(payload) => panic!("invalid: {payload:?}"),
+        }
+    });
+}
 
 async fn spawn_app(reactor: wasi_async_runtime::Reactor) -> (String, u16) {
     static INIT_TRACING_SUBSCRIBER: Once = Once::new();
