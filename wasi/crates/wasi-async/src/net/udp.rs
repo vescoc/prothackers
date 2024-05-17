@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::mem::ManuallyDrop;
 
 use wasi::sockets::instance_network::instance_network;
@@ -9,6 +8,7 @@ use wasi::sockets::udp::{
 };
 use wasi::sockets::udp_create_socket::create_udp_socket;
 
+use wasi_async_runtime::sync::RwLock;
 use wasi_async_runtime::Reactor;
 
 use tracing::{instrument, trace, warn};
@@ -19,7 +19,7 @@ pub struct UdpSocket {
     reactor: Reactor,
     network: network::Network,
     socket: ManuallyDrop<WasiUdpSocket>,
-    inner: RefCell<UdpSocketInner>,
+    inner: RwLock<UdpSocketInner>,
 }
 
 enum UdpSocketInner {
@@ -61,29 +61,24 @@ impl UdpSocket {
             }
         }
 
+        let (incoming_datagram_stream, outgoing_datagram_stream) = socket.stream(None)?;
+
         Ok(Self {
             reactor,
             network,
             socket: ManuallyDrop::new(socket),
-            inner: RefCell::new(UdpSocketInner::Uninitialized),
+            inner: RwLock::new(UdpSocketInner::Bind {
+                incoming_datagram_stream,
+                outgoing_datagram_stream,
+            }),
         })
-    }
-
-    pub fn local_addr(&self) -> Result<LocalSocketAddress, network::ErrorCode> {
-        match self.socket.local_address()? {
-            IpSocketAddress::Ipv4(Ipv4SocketAddress { port, .. })
-            | IpSocketAddress::Ipv6(Ipv6SocketAddress { port, .. }) => Ok(LocalSocketAddress(port)),
-        }
     }
 
     #[instrument(skip_all)]
     pub async fn connect(&self, address: impl ToSocketAddrs) -> Result<(), network::ErrorCode> {
         let socket_address = address.to_socket_addr(&self.reactor, &self.network).await?;
 
-        let mut inner = self
-            .inner
-            .try_borrow_mut()
-            .map_err(|_| network::ErrorCode::InvalidState)?;
+        let inner = &mut *self.inner.write().await;
         *inner = UdpSocketInner::Uninitialized;
 
         let (incoming_datagram_stream, outgoing_datagram_stream) =
@@ -97,14 +92,16 @@ impl UdpSocket {
         Ok(())
     }
 
+    pub fn local_addr(&self) -> Result<LocalSocketAddress, network::ErrorCode> {
+        match self.socket.local_address()? {
+            IpSocketAddress::Ipv4(Ipv4SocketAddress { port, .. })
+            | IpSocketAddress::Ipv6(Ipv6SocketAddress { port, .. }) => Ok(LocalSocketAddress(port)),
+        }
+    }
+
     #[instrument(skip_all)]
-    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn send(&self, data: Vec<u8>) -> Result<usize, network::ErrorCode> {
-        match &*self
-            .inner
-            .try_borrow()
-            .map_err(|_| network::ErrorCode::InvalidState)?
-        {
+        match &*self.inner.read().await {
             UdpSocketInner::Connect {
                 outgoing_datagram_stream,
                 ..
@@ -132,34 +129,14 @@ impl UdpSocket {
     }
 
     #[instrument(skip_all)]
-    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn send_to(
         &self,
         data: Vec<u8>,
         address: impl ToSocketAddrs,
     ) -> Result<usize, network::ErrorCode> {
-        {
-            let mut inner = self
-                .inner
-                .try_borrow_mut()
-                .map_err(|_| network::ErrorCode::InvalidState)?;
-            if let UdpSocketInner::Uninitialized = &mut *inner {
-                let (incoming_datagram_stream, outgoing_datagram_stream) =
-                    self.socket.stream(None)?;
-                *inner = UdpSocketInner::Bind {
-                    incoming_datagram_stream,
-                    outgoing_datagram_stream,
-                };
-            }
-        }
-
         let socket_address = address.to_socket_addr(&self.reactor, &self.network).await?;
 
-        match &*self
-            .inner
-            .try_borrow()
-            .map_err(|_| network::ErrorCode::InvalidState)?
-        {
+        match &*self.inner.read().await {
             UdpSocketInner::Connect {
                 outgoing_datagram_stream,
                 ..
@@ -191,29 +168,8 @@ impl UdpSocket {
     }
 
     #[instrument(skip_all)]
-    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn recv(&self) -> Result<Vec<u8>, network::ErrorCode> {
-        {
-            let mut inner = self
-                .inner
-                .try_borrow_mut()
-                .map_err(|_| network::ErrorCode::InvalidState)?;
-            if let UdpSocketInner::Uninitialized = &mut *inner {
-                trace!("bind");
-                let (incoming_datagram_stream, outgoing_datagram_stream) =
-                    self.socket.stream(None)?;
-                *inner = UdpSocketInner::Bind {
-                    incoming_datagram_stream,
-                    outgoing_datagram_stream,
-                };
-            }
-        }
-
-        match &*self
-            .inner
-            .try_borrow()
-            .map_err(|_| network::ErrorCode::InvalidState)?
-        {
+        match &*self.inner.read().await {
             UdpSocketInner::Connect {
                 incoming_datagram_stream,
                 ..
@@ -243,28 +199,8 @@ impl UdpSocket {
     }
 
     #[instrument(skip_all)]
-    #[allow(clippy::await_holding_refcell_ref)]
     pub async fn recv_from(&self) -> Result<(Vec<u8>, IpSocketAddress), network::ErrorCode> {
-        {
-            let mut inner = self
-                .inner
-                .try_borrow_mut()
-                .map_err(|_| network::ErrorCode::InvalidState)?;
-            if let UdpSocketInner::Uninitialized = &mut *inner {
-                let (incoming_datagram_stream, outgoing_datagram_stream) =
-                    self.socket.stream(None)?;
-                *inner = UdpSocketInner::Bind {
-                    incoming_datagram_stream,
-                    outgoing_datagram_stream,
-                };
-            }
-        }
-
-        match &*self
-            .inner
-            .try_borrow()
-            .map_err(|_| network::ErrorCode::InvalidState)?
-        {
+        match &*self.inner.read().await {
             UdpSocketInner::Connect {
                 incoming_datagram_stream,
                 ..

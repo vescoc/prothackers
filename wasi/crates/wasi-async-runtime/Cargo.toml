@@ -11,7 +11,11 @@ package = "component:wasi-async-runtime"
 
 [dependencies]
 wit-bindgen-rt.workspace = true
-futures.workspace = true
 wasi.workspace = true
 slab.workspace = true
 hashbrown.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+futures-concurrency.workspace = true
+tracing-subscriber.workspace = true
