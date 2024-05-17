@@ -1,5 +1,8 @@
 [workspace]
 members = [
+    "crates/wasi-async-runtime",
+    "crates/wasi-async",
+    
     "problems/p00-smoke-test",
     "problems/p01-prime-time",
     "problems/p02-means-to-an-end",
