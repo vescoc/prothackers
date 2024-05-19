@@ -6,7 +6,9 @@ members = [
     "problems/p00-smoke-test",
     "problems/p01-prime-time",
     "problems/p02-means-to-an-end",
-    "problems/p03-budget-chat", "problems/p04-unusual-database-program",
+    "problems/p03-budget-chat",
+    "problems/p04-unusual-database-program",
+    "problems/p05-mob-in-the-middle",
 ]
 resolver = "2"
 

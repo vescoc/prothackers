@@ -10,6 +10,8 @@ pub trait AsyncWrite {
     fn write(&mut self, data: &[u8]) -> impl Future<Output = Result<u64, StreamError>>;
 
     fn flush(&mut self) -> impl Future<Output = Result<(), StreamError>>;
+
+    fn close(&mut self) -> impl Future<Output = Result<(), StreamError>>;
 }
 
 pub trait AsyncWriteExt: AsyncWrite {
