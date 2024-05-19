@@ -1,0 +1,30 @@
+[package]
+name = "p05-mob-in-the-middle"
+version = "0.1.0"
+authors.workspace = true
+description.workspace = true
+edition.workspace = true
+
+[dependencies]
+futures.workspace = true
+futures-concurrency.workspace = true
+wit-bindgen-rt.workspace = true
+wasi.workspace = true
+wasi-async-runtime.workspace = true
+wasi-async.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+p03-budget-chat = { path = "../p03-budget-chat" }
+
+[package.metadata.component]
+package = "component:p05-mob-in-the-middle"
+
+[package.metadata.component.dependencies]
+
+[lints]
+workspace = true

@@ -185,6 +185,7 @@ impl TcpStream {
         };
         let write = WriteHalf {
             reactor: this.reactor.clone(),
+            socket: &this.socket,
             output_stream: &mut this.output_stream,
         };
         (read, write)
@@ -226,6 +227,7 @@ impl<'a> AsyncRead for ReadHalf<'a> {
 
 pub struct WriteHalf<'a> {
     reactor: Reactor,
+    socket: &'a TcpSocket,
     output_stream: &'a mut OutputStream,
 }
 
@@ -248,6 +250,11 @@ impl<'a> AsyncWrite for WriteHalf<'a> {
 
     async fn flush(&mut self) -> Result<(), StreamError> {
         self.output_stream.flush()
+    }
+
+    async fn close(&mut self) -> Result<(), StreamError> {
+        self.socket.shutdown(ShutdownType::Send).ok(); // TODO
+        Ok(())
     }
 }
 
@@ -301,12 +308,6 @@ pub struct OwnedWriteHalf {
     output_stream: ManuallyDrop<OutputStream>,
 }
 
-impl OwnedWriteHalf {
-    pub async fn close(self) -> Result<(), ErrorCode> {
-        self.socket.shutdown(ShutdownType::Send)
-    }
-}
-
 impl Drop for OwnedWriteHalf {
     fn drop(&mut self) {
         self.socket.shutdown(ShutdownType::Send).ok();
@@ -332,6 +333,11 @@ impl AsyncWrite for OwnedWriteHalf {
 
     async fn flush(&mut self) -> Result<(), StreamError> {
         self.output_stream.flush()
+    }
+
+    async fn close(&mut self) -> Result<(), StreamError> {
+        self.socket.shutdown(ShutdownType::Send).ok(); // TODO
+        Ok(())
     }
 }
 

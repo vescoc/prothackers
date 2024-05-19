@@ -4,7 +4,7 @@ use std::time::Duration;
 use futures::{sink, SinkExt, StreamExt};
 
 use wasi_async::codec::{FramedRead, LinesDecoder};
-use wasi_async::io::{AsyncRead, AsyncWriteExt};
+use wasi_async::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use wasi_async::net::{TcpListener, TcpStream};
 use wasi_async::time;
 
