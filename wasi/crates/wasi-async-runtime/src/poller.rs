@@ -22,8 +22,11 @@ impl Poller {
         }
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn insert(&mut self, target: Pollable) -> EventKey {
+        trace!("target: {target:?}");
         let key = self.targets.insert(target);
+        trace!("key: {key}");
         EventKey(key as u32)
     }
 

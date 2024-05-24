@@ -61,6 +61,7 @@ impl Reactor {
         }
     }
 
+    #[instrument(skip_all)]
     pub async fn wait_for<P: Into<Pollable>>(&self, pollable: P) {
         let mut pollable = Some(pollable.into());
         let mut key = None;
@@ -72,6 +73,7 @@ impl Reactor {
             reactor.wakers.insert(*key, cx.waker().clone());
 
             if reactor.poller.get(key).unwrap().ready() {
+                trace!("{key:?} is ready");
                 reactor.poller.remove(*key);
                 reactor.wakers.remove(key);
                 Poll::Ready(())
@@ -104,13 +106,12 @@ impl Reactor {
         }
 
         trace!(
-            "pending {:?}",
+            "pending {:?} complete {complete:?}",
             pending
                 .iter()
                 .map(|(task_id, _)| task_id)
                 .collect::<Vec<_>>()
         );
-        trace!("complete {complete:?}");
 
         let mut reactor = self.inner.borrow_mut();
         reactor.tasks.append(&mut pending);

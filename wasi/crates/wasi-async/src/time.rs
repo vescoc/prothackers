@@ -6,6 +6,8 @@ use std::time::Duration;
 use futures::FutureExt;
 use futures_concurrency::prelude::*;
 
+use tracing::{instrument, trace};
+
 use wasi::clocks::monotonic_clock;
 
 use wasi_async_runtime::Reactor;
@@ -21,16 +23,15 @@ impl fmt::Display for Elapsed {
     }
 }
 
+#[instrument(skip_all)]
 pub async fn timeout<F: Future>(
     reactor: Reactor,
     duration: Duration,
     future: F,
 ) -> Result<F::Output, Elapsed> {
-    let wait_for = reactor
-        .wait_for(monotonic_clock::subscribe_duration(
-            duration.as_nanos() as u64
-        ))
-        .map(|_| Err(Elapsed));
+    let subscription = monotonic_clock::subscribe_duration(duration.as_nanos() as u64);
+    trace!("subscribe duration {subscription:?}");
+    let wait_for = reactor.wait_for(subscription).map(|_| Err(Elapsed));
 
     let future = future.map(Ok);
 
@@ -81,10 +82,11 @@ impl Interval {
         self.period
     }
 
+    #[instrument(skip_all)]
     pub async fn tick(&mut self) {
-        self.reactor
-            .wait_for(monotonic_clock::subscribe_instant(self.current.0))
-            .await;
+        let subscription = monotonic_clock::subscribe_instant(self.current.0);
+        trace!("subscribe instant {subscription:?}");
+        self.reactor.wait_for(subscription).await;
         self.current += self.period;
     }
 }

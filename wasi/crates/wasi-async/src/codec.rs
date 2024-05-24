@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 
 use futures::{ready, Sink, Stream};
 
-use tracing::{error, instrument, trace};
+use tracing::{error, instrument, trace, warn};
 
 use wasi::io::streams::StreamError;
 
@@ -88,44 +88,40 @@ impl<R: AsyncRead + Unpin, D: Decoder + Unpin> Stream for FramedRead<R, D> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        if this.eof {
-            return this.handle_eof();
-        }
-
-        trace!("decode {}", this.buffer.len());
-        match this.decoder.decode(&mut this.buffer) {
-            Ok(Some(value)) => return Poll::Ready(Some(Ok(value))),
-            Err(e) => return Poll::Ready(Some(Err(e))),
-            Ok(None) => {}
-        }
-
-        let read = &mut this.read;
-        let len = this.buffer.capacity().max(1) as u64;
-        let (data, eof) = {
-            trace!("read {len}/{}", this.buffer.len());
-            let f = pin!(read.read(len));
-            match f.poll(cx) {
-                Poll::Ready(Ok(data)) => (Some(data), false),
-                Poll::Ready(Err(StreamError::Closed)) => (None, true),
-                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
-                Poll::Pending => return Poll::Pending,
+        loop {
+            if this.eof {
+                return this.handle_eof();
             }
-        };
 
-        if eof {
-            this.eof = true;
-            return this.handle_eof();
-        }
+            trace!("decode {}", this.buffer.len());
+            match this.decoder.decode(&mut this.buffer) {
+                Ok(Some(value)) => return Poll::Ready(Some(Ok(value))),
+                Err(e) => return Poll::Ready(Some(Err(e))),
+                Ok(None) => {}
+            }
 
-        let data = data.unwrap();
+            let read = &mut this.read;
+            let len = this.buffer.capacity().max(1) as u64;
+            let (data, eof) = {
+                trace!("read {len}/{}", this.buffer.len());
+                let f = pin!(read.read(len));
+                match f.poll(cx) {
+                    Poll::Ready(Ok(data)) => (Some(data), false),
+                    Poll::Ready(Err(StreamError::Closed)) => (None, true),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                    Poll::Pending => return Poll::Pending,
+                }
+            };
 
-        trace!("extend slice {}", data.len());
-        this.buffer.extend_from_slice(&data);
+            if eof {
+                this.eof = true;
+                continue;
+            }
 
-        match this.decoder.decode(&mut this.buffer) {
-            Ok(None) => Poll::Pending,
-            Ok(Some(value)) => Poll::Ready(Some(Ok(value))),
-            Err(e) => Poll::Ready(Some(Err(e))),
+            let data = data.unwrap();
+
+            trace!("extend slice {}", data.len());
+            this.buffer.extend_from_slice(&data);
         }
     }
 }

@@ -20,6 +20,7 @@ fn test_session() {
             .unwrap();
         let (mut read_bob, mut write_bob) = stream_bob.into_split();
         write_bob.write_all(b"bob\n").await.unwrap();
+        write_bob.flush().await.unwrap();
         reactor.clone().spawn(async move {
             let mut dev_null = sink::drain();
             loop {
@@ -36,6 +37,7 @@ fn test_session() {
             .unwrap();
         let (mut read_charlie, mut write_charlie) = stream_charlie.into_split();
         write_charlie.write_all(b"charlie\n").await.unwrap();
+        write_charlie.flush().await.unwrap();
         reactor.clone().spawn(async move {
             let mut dev_null = sink::drain();
             loop {
@@ -52,6 +54,7 @@ fn test_session() {
             .unwrap();
         let (mut read_dave, mut write_dave) = stream_dave.into_split();
         write_dave.write_all(b"dave\n").await.unwrap();
+        write_dave.flush().await.unwrap();
         reactor.clone().spawn(async move {
             let mut dev_null = sink::drain();
             loop {
@@ -86,8 +89,19 @@ fn test_session() {
 
         write_dave.close().await.unwrap();
 
-        let result = read_alice.next().await.unwrap().unwrap();
-        assert_eq!(result, b"* dave has left the room");
+        let result = loop {
+            let result = read_alice.next().await.unwrap().unwrap();
+            if !String::from_utf8_lossy(&result)
+                .into_owned()
+                .contains("entered")
+            {
+                break result;
+            }
+        };
+        assert_eq!(
+            String::from_utf8_lossy(&result).into_owned(),
+            String::from_utf8_lossy(b"* dave has left the room").into_owned()
+        );
 
         write_bob.write_all(b"hi alice\n").await.unwrap();
         let result = read_alice.next().await.unwrap().unwrap();

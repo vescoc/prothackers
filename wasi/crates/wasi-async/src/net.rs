@@ -35,7 +35,7 @@ pub(crate) mod sealed {
 
     use wasi_async_runtime::Reactor;
 
-    use tracing::{instrument, warn};
+    use tracing::{instrument, trace, warn};
 
     #[doc(hidden)]
     pub(crate) trait ToSocketAddrs {
@@ -75,7 +75,9 @@ pub(crate) mod sealed {
             loop {
                 match addresses.resolve_next_address() {
                     Err(network::ErrorCode::WouldBlock) => {
-                        reactor.wait_for(addresses.subscribe()).await;
+                        let subscription = addresses.subscribe();
+                        trace!("addresses subscribe {subscription:?}");
+                        reactor.wait_for(subscription).await;
                     }
                     Ok(Some(IpAddress::Ipv4(address))) => {
                         return Ok(IpSocketAddress::Ipv4(Ipv4SocketAddress { address, port }))
