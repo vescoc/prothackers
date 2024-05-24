@@ -48,7 +48,7 @@ fn main() -> Result<(), anyhow::Error> {
         .await
     });
 
-    info!("dome: {result:?}");
+    info!("done: {result:?}");
 
     Ok(result?)
 }

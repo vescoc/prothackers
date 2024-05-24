@@ -1,5 +1,6 @@
 use std::fmt;
 use std::future::Future;
+use std::ops;
 use std::time::Duration;
 
 use futures::FutureExt;
@@ -34,4 +35,56 @@ pub async fn timeout<F: Future>(
     let future = future.map(Ok);
 
     (wait_for, future).race().await
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct Instant(u64);
+
+impl Instant {
+    pub fn now() -> Self {
+        Self(monotonic_clock::now())
+    }
+}
+
+impl ops::Add<Duration> for Instant {
+    type Output = Instant;
+
+    fn add(self, duration: Duration) -> Self::Output {
+        Self(self.0 + duration.as_nanos() as u64)
+    }
+}
+
+impl ops::AddAssign<Duration> for Instant {
+    fn add_assign(&mut self, duration: Duration) {
+        self.0 += duration.as_nanos() as u64;
+    }
+}
+
+pub fn interval_at(reactor: Reactor, start: Instant, period: Duration) -> Interval {
+    assert!(period != Duration::from_nanos(0));
+    Interval {
+        reactor,
+        current: start,
+        period,
+    }
+}
+
+pub struct Interval {
+    reactor: Reactor,
+    current: Instant,
+    period: Duration,
+}
+
+impl Interval {
+    pub fn period(&self) -> Duration {
+        self.period
+    }
+
+    pub async fn tick(&mut self) {
+        self.reactor
+            .wait_for(monotonic_clock::subscribe_instant(self.current.0))
+            .await;
+        self.current += self.period;
+    }
 }

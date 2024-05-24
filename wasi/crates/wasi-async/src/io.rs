@@ -46,13 +46,13 @@ impl AsyncRead for &[u8] {
 }
 
 impl AsyncWrite for &mut Vec<u8> {
-    fn write(&mut self, data: &[u8]) -> impl Future<Output = Result<u64, StreamError>> {
+    async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
         self.extend_from_slice(data);
-        future::ready(Ok(data.len() as u64))
+        Ok(data.len() as u64)
     }
 
-    fn flush(&mut self) -> impl Future<Output = Result<(), StreamError>> {
-        future::ready(Ok(()))
+    async fn flush(&mut self) -> Result<(), StreamError> {
+        Ok(())
     }
 
     async fn close(&mut self) -> Result<(), StreamError> {

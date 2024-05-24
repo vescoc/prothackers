@@ -9,6 +9,8 @@ use hashbrown::{HashMap, HashSet};
 
 use wasi::io::poll::Pollable as WasiPollable;
 
+use tracing::{instrument, trace};
+
 use crate::noop_waker;
 use crate::poller::{EventKey, Poller};
 
@@ -80,6 +82,7 @@ impl Reactor {
         .await;
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn block_until(&self) {
         let mut tasks = {
             let mut reactor = self.inner.borrow_mut();
@@ -99,6 +102,15 @@ impl Reactor {
                 complete.insert(task_id);
             }
         }
+
+        trace!(
+            "pending {:?}",
+            pending
+                .iter()
+                .map(|(task_id, _)| task_id)
+                .collect::<Vec<_>>()
+        );
+        trace!("complete {complete:?}");
 
         let mut reactor = self.inner.borrow_mut();
         reactor.tasks.append(&mut pending);

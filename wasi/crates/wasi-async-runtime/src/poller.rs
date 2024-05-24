@@ -1,5 +1,7 @@
 use slab::Slab;
 
+use tracing::{instrument, trace};
+
 use wasi::io::poll::poll;
 
 use crate::reactor::Pollable;
@@ -33,6 +35,7 @@ impl Poller {
         self.targets.try_remove(key.0 as usize)
     }
 
+    #[instrument(skip_all)]
     pub(crate) fn block_until(&mut self) -> Vec<EventKey> {
         let mut indexes = Vec::with_capacity(self.targets.len());
         let mut targets = Vec::with_capacity(self.targets.len());
@@ -46,11 +49,13 @@ impl Poller {
             }
         }
 
+        trace!("start poll {targets:?}");
         let ready_indexes = if targets.is_empty() {
             vec![]
         } else {
             poll(&targets)
         };
+        trace!("done poll {ready_indexes:?}");
 
         ready_indexes
             .into_iter()

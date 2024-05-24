@@ -6,6 +6,14 @@ use wasi::io::streams::StreamError;
 
 use wasi_async::codec::{Decoder, Encoder};
 
+pub const ERROR_TAG: u8 = 0x10;
+pub const PLATE_TAG: u8 = 0x20;
+pub const TICKET_TAG: u8 = 0x21;
+pub const WANT_HEARTBEAT_TAG: u8 = 0x40;
+pub const HEARTBEAT_TAG: u8 = 0x41;
+pub const I_AM_CAMERA_TAG: u8 = 0x80;
+pub const I_AM_DISPATCHER_TAG: u8 = 0x81;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("stream error")]
@@ -51,6 +59,21 @@ pub enum Packet {
     IAmDispatcher {
         roads: Vec<u16>,
     },
+}
+
+impl Packet {
+    #[must_use]
+    pub fn tag(&self) -> u8 {
+        match self {
+            Packet::Error { .. } => ERROR_TAG,
+            Packet::Plate { .. } => PLATE_TAG,
+            Packet::Ticket { .. } => TICKET_TAG,
+            Packet::WantHeartbeat { .. } => WANT_HEARTBEAT_TAG,
+            Packet::Heartbeat => HEARTBEAT_TAG,
+            Packet::IAmCamera { .. } => I_AM_CAMERA_TAG,
+            Packet::IAmDispatcher { .. } => I_AM_DISPATCHER_TAG,
+        }
+    }
 }
 
 trait GetDataType: Buf {
@@ -141,14 +164,14 @@ impl Decoder for PacketCodec {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         let mut data = BytesMut::from(src.chunk());
         let r = match some!(data.get_u8_d()) {
-            0x10 => Ok(Some(Packet::Error {
+            ERROR_TAG => Ok(Some(Packet::Error {
                 msg: some!(data.get_str_d()),
             })),
-            0x20 => Ok(Some(Packet::Plate {
+            PLATE_TAG => Ok(Some(Packet::Plate {
                 plate: some!(data.get_str_d()),
                 timestamp: some!(data.get_u32_d()),
             })),
-            0x21 => Ok(Some(Packet::Ticket {
+            TICKET_TAG => Ok(Some(Packet::Ticket {
                 plate: some!(data.get_str_d()),
                 road: some!(data.get_u16_d()),
                 mile1: some!(data.get_u16_d()),
@@ -157,16 +180,16 @@ impl Decoder for PacketCodec {
                 timestamp2: some!(data.get_u32_d()),
                 speed: some!(data.get_u16_d()),
             })),
-            0x40 => Ok(Some(Packet::WantHeartbeat {
+            WANT_HEARTBEAT_TAG => Ok(Some(Packet::WantHeartbeat {
                 interval: some!(data.get_u32_d()),
             })),
-            0x41 => Ok(Some(Packet::Heartbeat)),
-            0x80 => Ok(Some(Packet::IAmCamera {
+            HEARTBEAT_TAG => Ok(Some(Packet::Heartbeat)),
+            I_AM_CAMERA_TAG => Ok(Some(Packet::IAmCamera {
                 road: some!(data.get_u16_d()),
                 mile: some!(data.get_u16_d()),
                 limit: some!(data.get_u16_d()),
             })),
-            0x81 => {
+            I_AM_DISPATCHER_TAG => {
                 let len = some!(data.get_u8_d()) as usize;
                 let mut roads = Vec::with_capacity(len);
                 for _ in 0..len {
@@ -177,12 +200,12 @@ impl Decoder for PacketCodec {
             c => Err(Error::InvalidMessage(c)),
         };
 
-        match r {
-            Ok(Some(_)) => {
-                src.advance(src.len() - data.len());
-                r
-            }
-            _ => r,
+        if let Ok(Some(_)) = r {
+            src.advance(src.len() - data.len());
+            r
+        } else {
+            src.reserve(1);
+            r
         }
     }
 }
@@ -194,11 +217,11 @@ impl Encoder<Packet> for PacketCodec {
     fn encode(&mut self, packet: Packet, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match packet {
             Packet::Error { msg } => {
-                dst.put_u8_d(0x10);
+                dst.put_u8_d(ERROR_TAG);
                 dst.put_str_d(&msg);
             }
             Packet::Plate { plate, timestamp } => {
-                dst.put_u8_d(0x20);
+                dst.put_u8_d(PLATE_TAG);
                 dst.put_str_d(&plate);
                 dst.put_u32_d(timestamp);
             }
@@ -211,7 +234,7 @@ impl Encoder<Packet> for PacketCodec {
                 timestamp2,
                 speed,
             } => {
-                dst.put_u8_d(0x21);
+                dst.put_u8_d(TICKET_TAG);
                 dst.put_str_d(&plate);
                 dst.put_u16_d(road);
                 dst.put_u16_d(mile1);
@@ -221,20 +244,20 @@ impl Encoder<Packet> for PacketCodec {
                 dst.put_u16_d(speed);
             }
             Packet::WantHeartbeat { interval } => {
-                dst.put_u8_d(0x40);
+                dst.put_u8_d(WANT_HEARTBEAT_TAG);
                 dst.put_u32_d(interval);
             }
             Packet::Heartbeat => {
-                dst.put_u8_d(0x41);
+                dst.put_u8_d(HEARTBEAT_TAG);
             }
             Packet::IAmCamera { road, mile, limit } => {
-                dst.put_u8_d(0x80);
+                dst.put_u8_d(I_AM_CAMERA_TAG);
                 dst.put_u16_d(road);
                 dst.put_u16_d(mile);
                 dst.put_u16_d(limit);
             }
             Packet::IAmDispatcher { roads } => {
-                dst.put_u8_d(0x81);
+                dst.put_u8_d(I_AM_DISPATCHER_TAG);
                 dst.put_u8_d(roads.len() as u8);
                 for value in roads {
                     dst.put_u16_d(value);
@@ -251,9 +274,11 @@ mod tests {
     use wasi_async::codec::{FramedRead, FramedWrite};
     use wasi_async_runtime::block_on;
 
-    use super::*;
-
     use futures::{SinkExt, StreamExt};
+
+    use crate::tests::init_tracing_subscriber;
+
+    use super::*;
 
     #[test]
     #[allow(non_snake_case)]
@@ -338,6 +363,8 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_read_IAmDispatcher() {
+        init_tracing_subscriber();
+
         block_on(|_| async move {
             let buffer = [0x81, 0x01, 0x00, 0x42];
             let mut stream = FramedRead::new(buffer.as_slice(), PacketCodec);
@@ -352,6 +379,8 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_write_IAmDispatcher() {
+        init_tracing_subscriber();
+
         block_on(|_| async move {
             let mut buffer = vec![];
             let mut write = FramedWrite::new(&mut buffer, PacketCodec);
@@ -416,6 +445,8 @@ mod tests {
     #[test]
     #[allow(non_snake_case)]
     fn test_read_Error() {
+        init_tracing_subscriber();
+
         block_on(|_| async move {
             let buffer = [0x10, 0x03, 0x62, 0x61, 0x64];
             let mut stream = FramedRead::new(buffer.as_slice(), PacketCodec);
