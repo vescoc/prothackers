@@ -22,7 +22,7 @@ use crate::net::{ip_address_family, LocalSocketAddress, ToSocketAddrs};
 
 pub struct TcpListener {
     reactor: Reactor,
-    socket: TcpSocket,
+    socket: ManuallyDrop<TcpSocket>,
 }
 
 impl TcpListener {
@@ -62,7 +62,10 @@ impl TcpListener {
             }
         }
 
-        Ok(Self { reactor, socket })
+        Ok(Self {
+            reactor,
+            socket: ManuallyDrop::new(socket),
+        })
     }
 
     #[instrument(skip_all)]

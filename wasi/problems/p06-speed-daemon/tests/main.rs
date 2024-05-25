@@ -110,23 +110,6 @@ fn test_session() {
                     }
                 );
             }
-
-            if false {
-                let ticket = read.next().await.unwrap().unwrap();
-
-                assert_eq!(
-                    ticket,
-                    wire::Packet::Ticket {
-                        plate: "UN1X".to_string(),
-                        road: 123,
-                        mile1: 8,
-                        timestamp1: 0,
-                        mile2: 9,
-                        timestamp2: 45,
-                        speed: 8000,
-                    }
-                );
-            }
         }
     });
 }

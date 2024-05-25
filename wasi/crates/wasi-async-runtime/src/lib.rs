@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::pin::pin;
-use std::ptr;
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::task::{Context, Poll};
 
 #[allow(warnings)]
 mod bindings;
@@ -17,26 +16,18 @@ where
     F: FnOnce(Reactor) -> Fut,
     Fut: Future,
 {
-    let reactor = Reactor::new();
+    let (reactor, waker) = Reactor::new();
 
     let fut = (f)(reactor.clone());
     let mut fut = pin!(fut);
 
-    let waker = noop_waker();
     let mut cx = Context::from_waker(&waker);
 
     loop {
+        reactor.reset_main_task_state();
         match fut.as_mut().poll(&mut cx) {
             Poll::Ready(res) => return res,
             Poll::Pending => reactor.block_until(),
         }
     }
-}
-
-fn noop_waker() -> Waker {
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW, |_| {}, |_| {}, |_| {});
-    const RAW: RawWaker = RawWaker::new(ptr::null(), &VTABLE);
-
-    // Safety: all fields are no-ops, so this is safe
-    unsafe { Waker::from_raw(RAW) }
 }
