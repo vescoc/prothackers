@@ -1,6 +1,8 @@
 use std::future;
 use std::time::Duration;
 
+use tracing::{info, instrument};
+
 use wasi_async::time::{self, Instant};
 use wasi_async_runtime::Reactor;
 
@@ -19,7 +21,9 @@ impl Heartbeat {
         }
     }
 
+    #[instrument(skip(self))]
     pub(crate) fn set_period(&mut self, period: Duration) {
+        info!("setting period {period:?}");
         self.period = Some(period);
         if period == Duration::from_millis(0) {
             self.interval = None;

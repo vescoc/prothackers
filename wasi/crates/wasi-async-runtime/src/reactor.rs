@@ -178,17 +178,18 @@ impl Reactor {
                 .count();
 
             trace!(
-                "pending {:?} complete {complete:?} ready: {}",
+                "pending {:?} ready: {ready}",
                 pending
                     .iter()
                     .map(|(task_id, ..)| task_id)
                     .collect::<Vec<_>>(),
-                ready,
             );
 
             if ready == 0 {
                 break pending;
             }
+
+            tasks = pending;
         };
 
         let mut reactor = self.inner.borrow_mut();

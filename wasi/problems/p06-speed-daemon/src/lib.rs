@@ -115,10 +115,10 @@ pub async fn run(reactor: Reactor, listener: TcpListener) -> Result<(), Error> {
                     )
                     .await
                     else {
-                        debug!("done client");
+                        debug!("done client {remote_address:?}");
                         return;
                     };
-                    warn!("handle client error: {err:?}");
+                    warn!("handle client error {remote_address:?}: {err:?}");
                 });
             }
             Err(err) => {

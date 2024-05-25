@@ -90,26 +90,24 @@ fn test_session() {
                 .unwrap();
             debug!("sent IAmDispatcher");
 
-            if false {
-                let ticket = timeout(reactor, Duration::from_millis(1000), read.next())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .unwrap();
+            let ticket = timeout(reactor, Duration::from_millis(1000), read.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
 
-                assert_eq!(
-                    ticket,
-                    wire::Packet::Ticket {
-                        plate: "UN1X".to_string(),
-                        road: 123,
-                        mile1: 8,
-                        timestamp1: 0,
-                        mile2: 9,
-                        timestamp2: 45,
-                        speed: 8000,
-                    }
-                );
-            }
+            assert_eq!(
+                ticket,
+                wire::Packet::Ticket {
+                    plate: "UN1X".to_string(),
+                    road: 123,
+                    mile1: 8,
+                    timestamp1: 0,
+                    mile2: 9,
+                    timestamp2: 45,
+                    speed: 8000,
+                }
+            );
         }
     });
 }

@@ -234,23 +234,21 @@ pub struct ReadHalf<'a> {
 impl<'a> AsyncRead for ReadHalf<'a> {
     #[instrument(skip_all)]
     async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
-        let data = self.input_stream.read(len)?;
-        if !data.is_empty() {
-            return Ok(data);
+        loop {
+            let data = self.input_stream.read(len)?;
+            if !data.is_empty() {
+                return Ok(data);
+            }
+
+            let subscription = self.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+
+            let data = self.input_stream.read(len)?;
+            if data.is_empty() && len == 0 {
+                return Ok(data);
+            }
         }
-
-        trace!("data is empty, request {len}");
-
-        let subscription = self.input_stream.subscribe();
-        trace!("input stream subscription {subscription:?}");
-        self.reactor.wait_for(subscription).await;
-
-        let data = self.input_stream.read(len)?;
-        if data.is_empty() {
-            trace!("data is empty");
-        }
-
-        Ok(data)
     }
 }
 
@@ -342,21 +340,21 @@ impl Drop for OwnedReadHalf {
 impl AsyncRead for OwnedReadHalf {
     #[instrument(skip_all)]
     async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
-        let data = self.input_stream.read(len)?;
-        if !data.is_empty() {
-            return Ok(data);
+        loop {
+            let data = self.input_stream.read(len)?;
+            if !data.is_empty() {
+                return Ok(data);
+            }
+
+            let subscription = self.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+
+            let data = self.input_stream.read(len)?;
+            if data.is_empty() || len == 0 {
+                return Ok(data);
+            }
         }
-
-        let subscription = self.input_stream.subscribe();
-        trace!("input stream subscription {subscription:?}");
-        self.reactor.wait_for(subscription).await;
-
-        let data = self.input_stream.read(len)?;
-        if data.is_empty() {
-            trace!("data is empty");
-        }
-
-        Ok(data)
     }
 }
 

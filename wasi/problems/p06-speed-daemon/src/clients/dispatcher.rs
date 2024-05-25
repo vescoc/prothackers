@@ -75,9 +75,9 @@ where
 
     let (ticket_sender, mut ticket_receiver) = mpsc::unbounded();
 
-    let _guard = DispatcherGuard::new(controller_sender, roads, ticket_sender);
+    let guard = DispatcherGuard::new(controller_sender, roads, ticket_sender);
 
-    loop {
+    let r = loop {
         let interval = {
             let setted = heartbeat.is_setted();
 
@@ -114,7 +114,7 @@ where
                     break Err(wire::Error::InvalidMessage(packet.tag()).into());
                 }
                 HandlerResult::Receive(None) => {
-                    info!("controller connection close");
+                    warn!("controller connection close");
                     break Ok(());
                 }
                 HandlerResult::Receive(Some(controller::Ticket {
@@ -148,7 +148,11 @@ where
                 warn!("heartbeat already setted");
                 break Err(wire::Error::InvalidMessage(wire::WANT_HEARTBEAT_TAG).into());
             }
-            heartbeat.set_period(Duration::from_nanos(u64::from(interval)));
+            heartbeat.set_period(Duration::from_millis(u64::from(interval * 100)));
         }
-    }
+    };
+
+    drop(guard);
+
+    r
 }

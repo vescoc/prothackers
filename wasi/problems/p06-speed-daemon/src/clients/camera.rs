@@ -128,7 +128,7 @@ where
                 warn!("heartbeat already setted");
                 break Err(wire::Error::InvalidMessage(wire::WANT_HEARTBEAT_TAG).into());
             }
-            heartbeat.set_period(Duration::from_nanos(u64::from(interval)));
+            heartbeat.set_period(Duration::from_millis(u64::from(interval * 100)));
         }
     }
 }

@@ -43,31 +43,45 @@ pub(crate) async fn handle(
     let mut read = FramedRead::new(read, wire::PacketCodec);
     let mut write = FramedWrite::new(write, wire::PacketCodec);
 
-    match identify(&mut heartbeat, &mut read, &mut write).await? {
-        ClientType::Camera { road, mile, limit } => Ok(camera::handle(
-            controller_sender,
-            cameras,
-            &mut heartbeat,
-            &mut read,
-            &mut write,
-            road,
-            mile,
-            limit,
-        )
-        .await?),
-        ClientType::Dispatcher { roads } => Ok(dispatcher::handle(
-            controller_sender,
-            &mut heartbeat,
-            &mut read,
-            &mut write,
-            &roads,
-        )
-        .await?),
-        ClientType::Unknown => {
-            warn!("unknown client, done");
-            Ok(())
+    let r: Result<(), Error> = async {
+        match identify(&mut heartbeat, &mut read, &mut write).await? {
+            ClientType::Camera { road, mile, limit } => Ok(camera::handle(
+                controller_sender,
+                cameras,
+                &mut heartbeat,
+                &mut read,
+                &mut write,
+                road,
+                mile,
+                limit,
+            )
+            .await?),
+            ClientType::Dispatcher { roads } => Ok(dispatcher::handle(
+                controller_sender,
+                &mut heartbeat,
+                &mut read,
+                &mut write,
+                &roads,
+            )
+            .await?),
+            ClientType::Unknown => {
+                warn!("unknown client, done");
+                Ok(())
+            }
         }
     }
+    .await;
+
+    if let Err(err) = r {
+        write
+            .send(wire::Packet::Error {
+                msg: err.to_string(),
+            })
+            .await
+            .ok();
+    }
+    write.close().await.ok();
+    Ok(())
 }
 
 type Handler<'a, E> = Pin<&'a mut dyn Future<Output = HandlerResult<E>>>;
@@ -141,7 +155,7 @@ where
                 warn!("heartbeat already setted");
                 break Err(wire::Error::InvalidMessage(wire::WANT_HEARTBEAT_TAG).into());
             }
-            heartbeat.set_period(Duration::from_nanos(u64::from(interval)));
+            heartbeat.set_period(Duration::from_millis(u64::from(interval * 100)));
         }
     }
 }
