@@ -4,7 +4,7 @@ use std::task::{Context, Poll};
 
 use futures::{ready, Sink, Stream};
 
-use tracing::{error, instrument, trace};
+use tracing::{error, instrument, trace, warn};
 
 use wasi::io::streams::StreamError;
 
@@ -88,42 +88,40 @@ impl<R: AsyncRead + Unpin, D: Decoder + Unpin> Stream for FramedRead<R, D> {
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let this = self.get_mut();
 
-        if this.eof {
-            return this.handle_eof();
-        }
-
-        match this.decoder.decode(&mut this.buffer) {
-            Ok(Some(value)) => return Poll::Ready(Some(Ok(value))),
-            Err(e) => return Poll::Ready(Some(Err(e))),
-            Ok(None) => {}
-        }
-
-        let read = &mut this.read;
-        let len = this.buffer.capacity().max(1) as u64;
-        let (data, eof) = {
-            let f = pin!(read.read(len));
-            match f.poll(cx) {
-                Poll::Ready(Ok(data)) => (Some(data), false),
-                Poll::Ready(Err(StreamError::Closed)) => (None, true),
-                Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
-                Poll::Pending => return Poll::Pending,
+        loop {
+            if this.eof {
+                return this.handle_eof();
             }
-        };
 
-        if eof {
-            this.eof = true;
-            return this.handle_eof();
-        }
+            trace!("decode {}", this.buffer.len());
+            match this.decoder.decode(&mut this.buffer) {
+                Ok(Some(value)) => return Poll::Ready(Some(Ok(value))),
+                Err(e) => return Poll::Ready(Some(Err(e))),
+                Ok(None) => {}
+            }
 
-        let data = data.unwrap();
+            let read = &mut this.read;
+            let len = this.buffer.capacity().max(1) as u64;
+            let (data, eof) = {
+                trace!("read {len}/{}", this.buffer.len());
+                let f = pin!(read.read(len));
+                match f.poll(cx) {
+                    Poll::Ready(Ok(data)) => (Some(data), false),
+                    Poll::Ready(Err(StreamError::Closed)) => (None, true),
+                    Poll::Ready(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                    Poll::Pending => return Poll::Pending,
+                }
+            };
 
-        trace!("extend slice {}", data.len());
-        this.buffer.extend_from_slice(&data);
+            if eof {
+                this.eof = true;
+                continue;
+            }
 
-        match this.decoder.decode(&mut this.buffer) {
-            Ok(None) => Poll::Pending,
-            Ok(Some(value)) => Poll::Ready(Some(Ok(value))),
-            Err(e) => Poll::Ready(Some(Err(e))),
+            let data = data.unwrap();
+
+            trace!("extend slice {}", data.len());
+            this.buffer.extend_from_slice(&data);
         }
     }
 }
@@ -149,6 +147,7 @@ impl<W, E> FramedWrite<W, E> {
 impl<W: AsyncWrite + Unpin, E: Encoder<Item> + Unpin, Item> Sink<Item> for FramedWrite<W, E> {
     type Error = E::Error;
 
+    #[instrument(skip_all)]
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
         if self.buffer.len() >= self.backpressure_boundary {
             self.as_mut().poll_flush(cx)
@@ -157,8 +156,10 @@ impl<W: AsyncWrite + Unpin, E: Encoder<Item> + Unpin, Item> Sink<Item> for Frame
         }
     }
 
+    #[instrument(skip_all)]
     fn start_send(self: Pin<&mut Self>, item: Item) -> Result<(), Self::Error> {
         let this = self.get_mut();
+        trace!("send {}", this.buffer.len());
         this.encoder.encode(item, &mut this.buffer)
     }
 
@@ -191,7 +192,10 @@ impl<W: AsyncWrite + Unpin, E: Encoder<Item> + Unpin, Item> Sink<Item> for Frame
         }
     }
 
+    #[instrument(skip_all)]
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Result<(), Self::Error>> {
+        trace!("close");
+
         ready!(self.as_mut().poll_flush(cx))?;
 
         Poll::Ready(Ok(()))

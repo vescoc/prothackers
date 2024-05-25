@@ -6,6 +6,8 @@ use std::task::Poll;
 
 use futures::{stream, Stream};
 
+use tracing::{instrument, trace};
+
 use wasi::sockets::instance_network::instance_network;
 use wasi::sockets::network::{ErrorCode, IpSocketAddress, Ipv4SocketAddress, Ipv6SocketAddress};
 use wasi::sockets::tcp::{ShutdownType, TcpSocket};
@@ -20,10 +22,11 @@ use crate::net::{ip_address_family, LocalSocketAddress, ToSocketAddrs};
 
 pub struct TcpListener {
     reactor: Reactor,
-    socket: TcpSocket,
+    socket: ManuallyDrop<TcpSocket>,
 }
 
 impl TcpListener {
+    #[instrument(skip_all)]
     pub async fn bind(reactor: Reactor, address: impl ToSocketAddrs) -> Result<Self, ErrorCode> {
         let network = instance_network();
 
@@ -37,7 +40,9 @@ impl TcpListener {
         loop {
             match socket.finish_bind() {
                 Err(ErrorCode::WouldBlock) => {
-                    reactor.wait_for(socket.subscribe()).await;
+                    let subscription = socket.subscribe();
+                    trace!("socket subscription finish bind {subscription:?}");
+                    reactor.wait_for(subscription).await;
                 }
                 Err(err) => return Err(err),
                 Ok(()) => break,
@@ -48,22 +53,29 @@ impl TcpListener {
         loop {
             match socket.finish_listen() {
                 Err(ErrorCode::WouldBlock) => {
-                    reactor.wait_for(socket.subscribe()).await;
+                    let subscription = socket.subscribe();
+                    trace!("socket subscription finish listener {subscription:?}");
+                    reactor.wait_for(subscription).await;
                 }
                 Err(err) => return Err(err),
                 Ok(()) => break,
             }
         }
 
-        Ok(Self { reactor, socket })
+        Ok(Self {
+            reactor,
+            socket: ManuallyDrop::new(socket),
+        })
     }
 
+    #[instrument(skip_all)]
     pub fn into_stream(
         self,
     ) -> impl Stream<Item = Result<(TcpStream, IpSocketAddress), ErrorCode>> {
         stream::poll_fn(move |cx| {
             let reactor = self.reactor.clone();
             let subscription = self.socket.subscribe();
+            trace!("socket subscription {subscription:?}");
             let wait_for = pin!(reactor.wait_for(subscription));
             if wait_for.poll(cx).is_pending() {
                 return Poll::Pending;
@@ -91,8 +103,11 @@ impl TcpListener {
         })
     }
 
+    #[instrument(skip_all)]
     pub async fn accept(&self) -> Result<(TcpStream, IpSocketAddress), ErrorCode> {
-        self.reactor.wait_for(self.socket.subscribe()).await;
+        let subscription = self.socket.subscribe();
+        trace!("socket subscription {subscription:?}");
+        self.reactor.wait_for(subscription).await;
 
         let (socket, input_stream, output_stream) = self.socket.accept()?;
 
@@ -128,6 +143,7 @@ struct TcpStreamInner {
 pub struct TcpStream(Option<TcpStreamInner>);
 
 impl TcpStream {
+    #[instrument(skip_all)]
     pub async fn connect(
         reactor: Reactor,
         remote_address: impl ToSocketAddrs,
@@ -142,7 +158,9 @@ impl TcpStream {
 
         socket.start_connect(&network, socket_address)?;
 
-        reactor.wait_for(socket.subscribe()).await;
+        let subscription = socket.subscribe();
+        trace!("socket subscription {subscription:?}");
+        reactor.wait_for(subscription).await;
 
         let (input_stream, output_stream) = socket.finish_connect()?;
 
@@ -214,13 +232,22 @@ pub struct ReadHalf<'a> {
 }
 
 impl<'a> AsyncRead for ReadHalf<'a> {
+    #[instrument(skip_all)]
     async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
         loop {
             let data = self.input_stream.read(len)?;
             if !data.is_empty() {
                 return Ok(data);
             }
-            self.reactor.wait_for(self.input_stream.subscribe()).await;
+
+            let subscription = self.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+
+            let data = self.input_stream.read(len)?;
+            if data.is_empty() && len == 0 {
+                return Ok(data);
+            }
         }
     }
 }
@@ -232,13 +259,21 @@ pub struct WriteHalf<'a> {
 }
 
 impl<'a> AsyncWrite for WriteHalf<'a> {
+    #[instrument(skip_all)]
     async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
+        if data.is_empty() {
+            return Ok(0);
+        }
+
         let len = loop {
             let len = self.output_stream.check_write()?;
             if len > 0 {
                 break len;
             }
-            self.reactor.wait_for(self.output_stream.subscribe()).await;
+            trace!("cannot write");
+            let subscription = self.output_stream.subscribe();
+            trace!("socket output stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         };
 
         let len = data.len().min(len as usize);
@@ -248,8 +283,15 @@ impl<'a> AsyncWrite for WriteHalf<'a> {
         Ok(len as u64)
     }
 
+    #[instrument(skip_all)]
     async fn flush(&mut self) -> Result<(), StreamError> {
-        self.output_stream.flush()
+        self.output_stream.flush()?;
+        while self.output_stream.check_write()? == 0 {
+            let subscription = self.output_stream.subscribe();
+            trace!("output stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+        }
+        Ok(())
     }
 
     async fn close(&mut self) -> Result<(), StreamError> {
@@ -259,13 +301,16 @@ impl<'a> AsyncWrite for WriteHalf<'a> {
 }
 
 impl<'a> WriteHalf<'a> {
+    #[instrument(skip_all)]
     pub async fn splice(&mut self, read: &mut ReadHalf<'_>, len: u64) -> Result<u64, StreamError> {
         if len == 0 {
             return Ok(0);
         }
 
         while self.output_stream.check_write()?.min(len) == 0 {
-            self.reactor.wait_for(self.output_stream.subscribe()).await;
+            let subscription = self.output_stream.subscribe();
+            trace!("output stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         }
 
         loop {
@@ -273,7 +318,9 @@ impl<'a> WriteHalf<'a> {
             if len > 0 {
                 return Ok(len);
             }
-            self.reactor.wait_for(read.input_stream.subscribe()).await;
+            let subscription = read.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         }
     }
 }
@@ -291,13 +338,22 @@ impl Drop for OwnedReadHalf {
 }
 
 impl AsyncRead for OwnedReadHalf {
+    #[instrument(skip_all)]
     async fn read(&mut self, len: u64) -> Result<Vec<u8>, StreamError> {
         loop {
             let data = self.input_stream.read(len)?;
             if !data.is_empty() {
                 return Ok(data);
             }
-            self.reactor.wait_for(self.input_stream.subscribe()).await;
+
+            let subscription = self.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+
+            let data = self.input_stream.read(len)?;
+            if data.is_empty() || len == 0 {
+                return Ok(data);
+            }
         }
     }
 }
@@ -315,13 +371,16 @@ impl Drop for OwnedWriteHalf {
 }
 
 impl AsyncWrite for OwnedWriteHalf {
+    #[instrument(skip_all)]
     async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
         let len = loop {
             let len = self.output_stream.check_write()?;
             if len > 0 {
                 break len;
             }
-            self.reactor.wait_for(self.output_stream.subscribe()).await;
+            let subscription = self.output_stream.subscribe();
+            trace!("output stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         };
 
         let len = data.len().min(len as usize);
@@ -331,8 +390,15 @@ impl AsyncWrite for OwnedWriteHalf {
         Ok(len as u64)
     }
 
+    #[instrument(skip_all)]
     async fn flush(&mut self) -> Result<(), StreamError> {
-        self.output_stream.flush()
+        self.output_stream.flush()?;
+        while self.output_stream.check_write()? == 0 {
+            let subscription = self.output_stream.subscribe();
+            trace!("output stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
+        }
+        Ok(())
     }
 
     async fn close(&mut self) -> Result<(), StreamError> {
@@ -342,13 +408,16 @@ impl AsyncWrite for OwnedWriteHalf {
 }
 
 impl OwnedWriteHalf {
+    #[instrument(skip_all)]
     pub async fn splice(&mut self, read: &mut OwnedReadHalf, len: u64) -> Result<u64, StreamError> {
         if len == 0 {
             return Ok(0);
         }
 
         while self.output_stream.check_write()?.min(len) == 0 {
-            self.reactor.wait_for(self.output_stream.subscribe()).await;
+            let subscription = self.output_stream.subscribe();
+            trace!("ouput stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         }
 
         loop {
@@ -356,7 +425,9 @@ impl OwnedWriteHalf {
             if len > 0 {
                 return Ok(len);
             }
-            self.reactor.wait_for(read.input_stream.subscribe()).await;
+            let subscription = read.input_stream.subscribe();
+            trace!("input stream subscription {subscription:?}");
+            self.reactor.wait_for(subscription).await;
         }
     }
 }

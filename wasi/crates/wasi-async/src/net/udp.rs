@@ -101,6 +101,7 @@ impl UdpSocket {
 
     #[instrument(skip_all)]
     pub async fn send(&self, data: Vec<u8>) -> Result<usize, network::ErrorCode> {
+        trace!("send {}", data.len());
         match &*self.inner.read().await {
             UdpSocketInner::Connect {
                 outgoing_datagram_stream,
@@ -117,6 +118,7 @@ impl UdpSocket {
                     remote_address: None,
                 }])? == 0
                 {
+                    warn!("???");
                     return Err(network::ErrorCode::InvalidState);
                 }
                 Ok(len)

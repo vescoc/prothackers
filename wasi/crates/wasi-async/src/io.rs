@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::future::{self, Future};
 
 use wasi::io::streams::StreamError;
 
@@ -34,3 +34,28 @@ pub trait AsyncWriteExt: AsyncWrite {
 }
 
 impl<T: AsyncWrite> AsyncWriteExt for T {}
+
+impl AsyncRead for &[u8] {
+    fn read(&mut self, len: u64) -> impl Future<Output = Result<Vec<u8>, StreamError>> {
+        let len = len as usize;
+        let len = len.min(self.len());
+        let r = self[0..len].to_vec();
+        *self = &self[len..];
+        future::ready(Ok(r))
+    }
+}
+
+impl AsyncWrite for &mut Vec<u8> {
+    async fn write(&mut self, data: &[u8]) -> Result<u64, StreamError> {
+        self.extend_from_slice(data);
+        Ok(data.len() as u64)
+    }
+
+    async fn flush(&mut self) -> Result<(), StreamError> {
+        Ok(())
+    }
+
+    async fn close(&mut self) -> Result<(), StreamError> {
+        Ok(())
+    }
+}

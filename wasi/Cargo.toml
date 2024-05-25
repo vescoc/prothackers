@@ -9,6 +9,7 @@ members = [
     "problems/p03-budget-chat",
     "problems/p04-unusual-database-program",
     "problems/p05-mob-in-the-middle",
+    "problems/p06-speed-daemon",
 ]
 resolver = "2"
 
