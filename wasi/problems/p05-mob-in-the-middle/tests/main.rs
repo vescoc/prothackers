@@ -3,7 +3,8 @@ use std::sync::Once;
 
 use futures::StreamExt;
 
-use tracing::info;
+use tracing::{info, info_span};
+use tracing_futures::Instrument;
 
 use wasi_async::codec::{FramedRead, LinesDecoder};
 use wasi_async::io::AsyncWriteExt;
@@ -59,7 +60,7 @@ fn test_session() {
             std::str::from_utf8(&result).unwrap(),
             "[bob] Hi alice, please send payment to 7YWHMfk9JZe0LM0g1ZauHuiSxhI"
         );
-    });
+    }.instrument(info_span!("test_session")));
 }
 
 fn init_logging() {
@@ -82,7 +83,7 @@ async fn spawn_budget_chat_app(reactor: Reactor) -> (String, u16) {
         p03_budget_chat::run(reactor, listener)
             .await
             .expect("run failed");
-    });
+    }.instrument(info_span!("budget_chat_app")));
 
     info!("spawned budget chat app {address}:{port}");
 
@@ -110,7 +111,7 @@ async fn spawn_app(reactor: Reactor, chat_address: String, chat_port: u16) -> (S
         )
         .await
         .expect("run failed");
-    });
+    }.instrument(info_span!("app")));
 
     info!("spawned budget chat app {address}:{port}");
 

@@ -17,6 +17,7 @@ resolver = "2"
 authors = ["Claudio Vesco"]
 description = "protohackets tasks (Rust WASI)"
 edition = "2021"
+license = "MIT"
 
 [workspace.dependencies]
 futures = "0.3.30"
@@ -28,6 +29,7 @@ wasi-async = { path = "crates/wasi-async" }
 thiserror = "1.0.58"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", default-features = false, features = ["std", "alloc", "env-filter", "fmt", "registry", "local-time", "tracing-log"] }
+tracing-futures = "0.2.5"
 clap = { version = "4.5.3", features = ["derive"] }
 anyhow = "1.0.80"
 slab = "0.4.9"

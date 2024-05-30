@@ -3,6 +3,7 @@ name = "p00-smoke-test"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [package.metadata.component]
 package = "component:p00-smoke-test"

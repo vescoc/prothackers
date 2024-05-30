@@ -3,6 +3,7 @@ name = "wasi-async-runtime"
 version = "0.1.0"
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [package.metadata.component]
 package = "component:wasi-async-runtime"

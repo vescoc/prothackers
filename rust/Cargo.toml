@@ -19,6 +19,7 @@ resolver = "2"
 authors = ["Claudio Vesco"]
 description = "protohackers tasks"
 edition = "2021"
+license = "MIT"
 
 [workspace.dependencies]
 futures = "0.3.30"

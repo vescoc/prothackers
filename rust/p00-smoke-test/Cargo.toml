@@ -5,6 +5,7 @@ description = "Smoke Test"
 
 edition.workspace = true
 authors.workspace = true
+license.workspace = true
 
 [dependencies]
 tokio.workspace = true

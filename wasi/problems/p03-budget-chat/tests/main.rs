@@ -8,10 +8,13 @@ use wasi_async::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use wasi_async::net::{TcpListener, TcpStream};
 use wasi_async::time;
 
-use tracing::{debug, info, trace};
+use tracing::{debug, info, trace, info_span};
+use tracing_futures::Instrument;
 
 #[test]
 fn test_session() {
+    init_tracing_subscriber();
+    
     wasi_async_runtime::block_on(|reactor| async move {
         let (address, port) = spawn_app(reactor.clone()).await;
 
@@ -110,11 +113,13 @@ fn test_session() {
         write_charlie.write_all(b"hello alice\n").await.unwrap();
         let result = read_alice.next().await.unwrap().unwrap();
         assert_eq!(result, b"[charlie] hello alice");
-    });
+    }.instrument(tracing::info_span!("test_session")));
 }
 
 #[test]
 fn test_not_joining() {
+    init_tracing_subscriber();
+    
     wasi_async_runtime::block_on(|reactor| async move {
         let (address, port) = spawn_app(reactor.clone()).await;
 
@@ -151,13 +156,10 @@ fn test_not_joining() {
             Ok(Some(Ok(message))) => panic!("invalid: {:?}", std::str::from_utf8(&message)),
             Ok(payload) => panic!("invalid: {payload:?}"),
         }
-    });
+    }.instrument(info_span!("test_not_joining")));
 }
 
 async fn spawn_app(reactor: wasi_async_runtime::Reactor) -> (String, u16) {
-    static INIT_TRACING_SUBSCRIBER: Once = Once::new();
-    INIT_TRACING_SUBSCRIBER.call_once(tracing_subscriber::fmt::init);
-
     let address = "127.0.0.1";
 
     let listener = TcpListener::bind(reactor.clone(), format!("{address}:0"))
@@ -177,4 +179,9 @@ async fn spawn_app(reactor: wasi_async_runtime::Reactor) -> (String, u16) {
     info!("spawned app {address}:{port}");
 
     (address.to_string(), port)
+}
+
+fn init_tracing_subscriber() {
+    static INIT_TRACING_SUBSCRIBER: Once = Once::new();
+    INIT_TRACING_SUBSCRIBER.call_once(tracing_subscriber::fmt::init);
 }
