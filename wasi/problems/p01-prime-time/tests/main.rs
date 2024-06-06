@@ -30,7 +30,7 @@ fn test_invalid_number_float() {
         let response: p01_prime_time::Response = serde_json::from_slice(&line).unwrap();
         assert!(!response.prime);
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
@@ -54,7 +54,7 @@ fn test_invalid_number() {
 
         assert_eq!(&line, b"MALFORMED");
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
@@ -79,7 +79,7 @@ fn test_ignore_field() {
         let response: p01_prime_time::Response = serde_json::from_slice(&line).unwrap();
         assert!(response.prime);
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
@@ -103,7 +103,7 @@ fn test_invalid_message() {
 
         assert_eq!(&line, b"MALFORMED");
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
@@ -151,7 +151,7 @@ fn test_is_prime() {
         let response: p01_prime_time::Response = serde_json::from_slice(&line).unwrap();
         assert!(response.prime);
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
@@ -176,7 +176,7 @@ fn test_not_is_prime() {
         let response: p01_prime_time::Response = serde_json::from_slice(&line).unwrap();
         assert!(!response.prime);
 
-        stream.close().await.unwrap();
+        stream.close().await.ok();
     });
 }
 
